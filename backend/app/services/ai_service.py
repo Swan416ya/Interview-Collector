@@ -97,7 +97,7 @@ def _extract_output_text_from_response(data: dict) -> str:
     return ""
 
 
-def call_doubao_extract(prompt: str, raw_text: str) -> tuple[dict, dict]:
+def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = None) -> tuple[dict, dict]:
     if not settings.ai_api_key or not settings.ai_model:
         raise HTTPException(
             status_code=500,
@@ -129,7 +129,7 @@ def call_doubao_extract(prompt: str, raw_text: str) -> tuple[dict, dict]:
         "max_output_tokens": settings.ai_max_output_tokens,
         "temperature": 0,
         # Ark Responses API supports disabling deep thinking via this field.
-        "thinking": {"type": settings.ai_thinking_type},
+        "thinking": {"type": thinking_type or settings.ai_thinking_type},
     }
 
     timeout = httpx.Timeout(
@@ -248,7 +248,7 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
 }
 """.strip()
     input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
-    result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text)
+    result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text, thinking_type="disabled")
     if "score" not in result or "analysis" not in result:
         raise HTTPException(status_code=502, detail="AI grading output missing score or analysis")
     try:
@@ -271,11 +271,9 @@ def call_doubao_reference_answer(question_stem: str) -> str:
 {
   "reference_answer": "string"
 }
-3) reference_answer 控制在 120 字以内，直接给要点答案。
+3) reference_answer 直接给清晰、准确、可用于复习的答案。
 """.strip()
-    result, _ = call_doubao_extract(prompt=prompt, raw_text=f"题目：{question_stem}")
+    result, _ = call_doubao_extract(prompt=prompt, raw_text=f"题目：{question_stem}", thinking_type="disabled")
     answer = str(result.get("reference_answer", "")).strip()
-    if len(answer) > 120:
-        answer = answer[:120]
     return answer
 

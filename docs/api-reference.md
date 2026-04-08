@@ -30,7 +30,10 @@ When any API is added/removed/changed, update this file in the same commit.
 
 - Method: `GET`
 - Path: `/api/questions`
-- Description: List questions by latest id desc
+- Description:
+  - list questions with filter and sorting
+  - `sort_by` supports: `created_at`, `mastery_score`, `recent_encountered`
+  - `recent_encountered` means sort by latest practice record time
 - Response example:
 
 ```json
@@ -42,6 +45,31 @@ When any API is added/removed/changed, update this file in the same commit.
     "difficulty": 3
   }
 ]
+```
+
+### List Questions (Paginated)
+
+- Method: `GET`
+- Path: `/api/questions/page`
+- Query:
+  - `page` (>=1)
+  - `page_size` (1-100)
+  - `category` (optional)
+  - `difficulty` (optional)
+  - `sort_by` / `sort_order` (same as `/api/questions`)
+- Description:
+  - return paged result for question-bank page, avoid loading all questions at once
+- Response example:
+
+```json
+{
+  "total": 238,
+  "page": 2,
+  "page_size": 20,
+  "items": [
+    { "id": 21, "stem": "示例题目", "category": "计算机网络", "difficulty": 3 }
+  ]
+}
 ```
 
 ### Create Question
@@ -83,6 +111,111 @@ When any API is added/removed/changed, update this file in the same commit.
   "message": "practice module ready"
 }
 ```
+
+### Practice Categories (for training selector)
+
+- Method: `GET`
+- Path: `/api/practice/categories`
+- Description:
+  - return each category with question count
+  - `selectable=true` only when question count is at least 10
+- Response example:
+
+```json
+[
+  { "category": "计算机网络", "total_questions": 23, "selectable": true },
+  { "category": "操作系统", "total_questions": 8, "selectable": false }
+]
+```
+
+### Start Practice Session
+
+- Method: `POST`
+- Path: `/api/practice/sessions/start`
+- Query (optional):
+  - `category`: start a 10-question session from this category
+- Description:
+  - random pick 10 questions
+  - if category is set and count < 10, return 400
+
+### Start Custom Practice Session
+
+- Method: `POST`
+- Path: `/api/practice/sessions/start/custom`
+- Request body:
+
+```json
+{
+  "question_ids": [11, 29, 7, 54, 82, 15, 33, 60, 41, 22]
+}
+```
+
+- Description:
+  - start session with exactly 10 specified question ids
+  - used by memorize mode ("背题 10 题后乱序测验")
+
+### Submit Practice Answer
+
+- Method: `POST`
+- Path: `/api/practice/sessions/{session_id}/submit`
+- Description:
+  - call AI grading
+  - save `PracticeRecord`
+  - update question mastery score by formula:
+    - `new_mastery = old_mastery * 0.7 + latest_score(0-100) * 0.3`
+
+### Daily Question Submit
+
+- Method: `POST`
+- Path: `/api/practice/daily/submit`
+- Request body:
+
+```json
+{
+  "question_id": 123,
+  "user_answer": "我的作答..."
+}
+```
+
+- Description:
+  - AI judge one daily question answer immediately
+  - create one `PracticeRecord` with `session_id = null`
+  - return score/analysis/reference_answer
+  - update mastery by the same formula
+
+### Skip Practice Answer (score 0)
+
+- Method: `POST`
+- Path: `/api/practice/sessions/{session_id}/skip`
+- Request body:
+
+```json
+{
+  "question_id": 123
+}
+```
+
+- Description:
+  - when user clicks next without grading, record this question as skipped
+  - create a practice record with `ai_score=0`
+  - this 0 score is included in session total score and mastery update formula
+
+### Practice Session Summary
+
+- Method: `GET`
+- Path: `/api/practice/sessions/{session_id}/summary`
+
+### Practice Session List
+
+- Method: `GET`
+- Path: `/api/practice/sessions`
+- Description: list completed sessions only
+
+### Practice Session Records
+
+- Method: `GET`
+- Path: `/api/practice/sessions/{session_id}/records`
+- Description: return full records for one session
 
 ### Categories CRUD
 
@@ -151,9 +284,7 @@ When any API is added/removed/changed, update this file in the same commit.
 
 ### Practice Session
 
-- `POST /api/practice/sessions`
-- `GET /api/practice/sessions/{id}/next`
-- `POST /api/practice/submit`
+- no pending API in this module (already implemented)
 
 ### Progress / Wrongbook
 

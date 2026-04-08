@@ -13,6 +13,7 @@ const rawText = ref("");
 const previewItems = ref<PreviewQuestionItem[]>([]);
 const selected = ref<boolean[]>([]);
 const result = ref<ImportCommitResponse | null>(null);
+const importedFlags = ref<boolean[]>([]);
 const error = ref("");
 const errorDetail = ref("");
 const previewing = ref(false);
@@ -52,6 +53,7 @@ async function runPreview() {
     const data = await previewImport(rawText.value.trim());
     previewItems.value = data.questions;
     selected.value = data.questions.map(() => true);
+    importedFlags.value = data.questions.map(() => false);
   } catch (e) {
     error.value = formatError(e, "提取失败，请看下方详细错误");
   } finally {
@@ -71,7 +73,13 @@ async function submitImport() {
   errorDetail.value = "";
   result.value = null;
   try {
+    const importedIndexes = previewItems.value
+      .map((_, idx) => idx)
+      .filter((idx) => selected.value[idx]);
     result.value = await commitImport({ questions: checkedQuestions });
+    importedIndexes.forEach((idx) => {
+      importedFlags.value[idx] = true;
+    });
   } catch (e) {
     error.value = formatError(e, "导入失败，请看下方详细错误");
   } finally {
@@ -115,7 +123,13 @@ function toggleAll(checked: boolean) {
       <label
         v-for="(item, idx) in previewItems"
         :key="idx"
-        style="display: block; border: 1px solid #ddd; padding: 10px; border-radius: 6px;"
+        :style="{
+          display: 'block',
+          border: '1px solid #ddd',
+          padding: '10px',
+          borderRadius: '6px',
+          background: importedFlags[idx] ? '#dff5df' : '#ffffff'
+        }"
       >
         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
           <input v-model="selected[idx]" type="checkbox" />

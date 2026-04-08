@@ -27,6 +27,13 @@ class QuestionOut(BaseModel):
     created_at: datetime
 
 
+class QuestionPageOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[QuestionOut]
+
+
 class PracticeRecordCreate(BaseModel):
     session_id: int | None = None
     user_answer: str = ""

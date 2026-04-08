@@ -6,6 +6,12 @@ export interface PracticeStartResponse {
   questions: Question[];
 }
 
+export interface PracticeCategoryOption {
+  category: string;
+  total_questions: number;
+  selectable: boolean;
+}
+
 export interface PracticeRecord {
   id: number;
   session_id: number | null;
@@ -43,8 +49,17 @@ export interface PracticeSessionRecordsResponse {
   records: PracticeRecord[];
 }
 
-export async function startPracticeSession(): Promise<PracticeStartResponse> {
-  const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start");
+export async function startPracticeSession(category?: string): Promise<PracticeStartResponse> {
+  const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start", null, {
+    params: category ? { category } : undefined
+  });
+  return data;
+}
+
+export async function startPracticeSessionCustom(questionIds: number[]): Promise<PracticeStartResponse> {
+  const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start/custom", {
+    question_ids: questionIds
+  });
   return data;
 }
 
@@ -64,6 +79,28 @@ export async function submitPracticeAnswer(
   return data;
 }
 
+export async function submitDailyPracticeAnswer(
+  questionId: number,
+  userAnswer: string
+): Promise<PracticeSubmitResponse> {
+  const { data } = await apiClient.post<PracticeSubmitResponse>("/api/practice/daily/submit", {
+    question_id: questionId,
+    user_answer: userAnswer
+  }, { timeout: 120000 });
+  return data;
+}
+
+export async function skipPracticeAnswer(
+  sessionId: number,
+  questionId: number
+): Promise<PracticeSubmitResponse> {
+  const { data } = await apiClient.post<PracticeSubmitResponse>(
+    `/api/practice/sessions/${sessionId}/skip`,
+    { question_id: questionId }
+  );
+  return data;
+}
+
 export async function fetchPracticeSummary(sessionId: number): Promise<PracticeSummaryResponse> {
   const { data } = await apiClient.get<PracticeSummaryResponse>(`/api/practice/sessions/${sessionId}/summary`);
   return data;
@@ -76,6 +113,11 @@ export async function fetchPracticeSessions(): Promise<PracticeSessionListItem[]
 
 export async function fetchPracticeSessionRecords(sessionId: number): Promise<PracticeSessionRecordsResponse> {
   const { data } = await apiClient.get<PracticeSessionRecordsResponse>(`/api/practice/sessions/${sessionId}/records`);
+  return data;
+}
+
+export async function fetchPracticeCategories(): Promise<PracticeCategoryOption[]> {
+  const { data } = await apiClient.get<PracticeCategoryOption[]>("/api/practice/categories");
   return data;
 }
 

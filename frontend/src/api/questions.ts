@@ -5,6 +5,7 @@ export interface Question {
   stem: string;
   category: string;
   difficulty: number;
+  reference_answer?: string;
   mastery_score: number;
   created_at: string;
 }
@@ -18,8 +19,15 @@ export interface CreateQuestionPayload {
 export interface QuestionFilters {
   category?: string;
   difficulty?: number;
-  sort_by?: "created_at" | "mastery_score";
+  sort_by?: "created_at" | "mastery_score" | "recent_encountered";
   sort_order?: "asc" | "desc";
+}
+
+export interface QuestionPageResponse {
+  total: number;
+  page: number;
+  page_size: number;
+  items: Question[];
 }
 
 export interface UpdateQuestionPayload {
@@ -40,6 +48,13 @@ export interface PracticeRecord {
 
 export async function fetchQuestions(filters?: QuestionFilters): Promise<Question[]> {
   const { data } = await apiClient.get<Question[]>("/api/questions", { params: filters });
+  return data;
+}
+
+export async function fetchQuestionsPage(
+  params: QuestionFilters & { page: number; page_size: number }
+): Promise<QuestionPageResponse> {
+  const { data } = await apiClient.get<QuestionPageResponse>("/api/questions/page", { params });
   return data;
 }
 

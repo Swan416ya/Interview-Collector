@@ -11,6 +11,10 @@ const filters = reactive({
   difficulty: "",
   sortMode: "created_desc"
 });
+const pager = reactive({
+  page: 1,
+  pageSize: 20
+});
 const categoryOptions = ref<string[]>([]);
 const filteredMastery = ref(0);
 
@@ -30,6 +34,8 @@ const sortParams = computed(() => {
   if (filters.sortMode === "created_asc") return { sort_by: "created_at", sort_order: "asc" } as const;
   if (filters.sortMode === "mastery_desc") return { sort_by: "mastery_score", sort_order: "desc" } as const;
   if (filters.sortMode === "mastery_asc") return { sort_by: "mastery_score", sort_order: "asc" } as const;
+  if (filters.sortMode === "recent_desc") return { sort_by: "recent_encountered", sort_order: "desc" } as const;
+  if (filters.sortMode === "recent_asc") return { sort_by: "recent_encountered", sort_order: "asc" } as const;
   return { sort_by: "created_at", sort_order: "desc" } as const;
 });
 
@@ -47,7 +53,9 @@ async function runFilter() {
     category: filters.category.trim() || undefined,
     difficulty: filters.difficulty ? Number(filters.difficulty) : undefined,
     sort_by: sortParams.value.sort_by,
-    sort_order: sortParams.value.sort_order
+    sort_order: sortParams.value.sort_order,
+    page: pager.page,
+    page_size: pager.pageSize
   });
   recalcMastery();
 }
@@ -56,6 +64,13 @@ async function resetFilter() {
   filters.category = "";
   filters.difficulty = "";
   filters.sortMode = "created_desc";
+  pager.page = 1;
+  await runFilter();
+}
+
+async function changePage(nextPage: number) {
+  const totalPages = Math.max(1, Math.ceil((store.total || 0) / pager.pageSize));
+  pager.page = Math.max(1, Math.min(totalPages, nextPage));
   await runFilter();
 }
 
@@ -127,16 +142,18 @@ onMounted(async () => {
 <template>
   <section>
     <h2>题库管理</h2>
-    <p>当前筛选结果题数：{{ store.items.length }}，总掌握程度：{{ filteredMastery }}%</p>
+    <p>
+      当前页题数：{{ store.items.length }} / 总题数：{{ store.total }}，当前页平均掌握程度：{{ filteredMastery }}%
+    </p>
 
     <div class="swift-card" style="display: grid; gap: 10px; margin-bottom: 14px;">
       <h3 style="margin: 0;">筛选</h3>
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-        <select v-model="filters.category" @change="runFilter">
+        <select v-model="filters.category" @change="changePage(1)">
           <option value="">全部分类</option>
           <option v-for="c in categoryOptions" :key="c" :value="c">{{ c }}</option>
         </select>
-        <select v-model="filters.difficulty" @change="runFilter">
+        <select v-model="filters.difficulty" @change="changePage(1)">
           <option value="">全部难度</option>
           <option value="1">难度 1</option>
           <option value="2">难度 2</option>
@@ -144,16 +161,24 @@ onMounted(async () => {
           <option value="4">难度 4</option>
           <option value="5">难度 5</option>
         </select>
-        <select v-model="filters.sortMode" @change="runFilter">
+        <select v-model="filters.sortMode" @change="changePage(1)">
           <option value="created_desc">时间：新到旧</option>
           <option value="created_asc">时间：旧到新</option>
           <option value="mastery_desc">掌握度：高到低</option>
           <option value="mastery_asc">掌握度：低到高</option>
+          <option value="recent_desc">最近遇到：近到远</option>
+          <option value="recent_asc">最近遇到：远到近</option>
         </select>
       </div>
       <div style="display: flex; gap: 8px;">
         <button @click="runFilter">刷新</button>
         <button @click="resetFilter">重置</button>
+        <select v-model.number="pager.pageSize" @change="changePage(1)">
+          <option :value="10">每页 10</option>
+          <option :value="20">每页 20</option>
+          <option :value="50">每页 50</option>
+          <option :value="100">每页 100</option>
+        </select>
       </div>
     </div>
 
@@ -179,6 +204,17 @@ onMounted(async () => {
           <button @click="openActionModal(q)">查看与操作</button>
         </div>
       </div>
+    </div>
+
+    <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px;">
+      <button @click="changePage(pager.page - 1)" :disabled="pager.page <= 1">上一页</button>
+      <span>第 {{ pager.page }} / {{ Math.max(1, Math.ceil((store.total || 0) / pager.pageSize)) }} 页</span>
+      <button
+        @click="changePage(pager.page + 1)"
+        :disabled="pager.page >= Math.max(1, Math.ceil((store.total || 0) / pager.pageSize))"
+      >
+        下一页
+      </button>
     </div>
 
     <teleport to="body">

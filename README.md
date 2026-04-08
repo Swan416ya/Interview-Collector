@@ -80,6 +80,14 @@ http://localhost:5173
   - `POST /api/questions`
   - `POST /api/questions/backfill-reference-answers`
   - `GET /api/practice/ping`
+  - `GET /api/practice/categories`
+  - `POST /api/practice/sessions/start` (supports category filter)
+  - `POST /api/practice/sessions/start/custom` (for memorize->quiz flow)
+  - `POST /api/practice/sessions/{session_id}/submit`
+  - `POST /api/practice/sessions/{session_id}/skip` (no answer -> auto 0)
+  - `GET /api/practice/sessions/{session_id}/summary`
+  - `GET /api/practice/sessions`
+  - `GET /api/practice/sessions/{session_id}/records`
 - Frontend
   - Home / Questions / Practice / Practice History pages
   - Questions page supports filter/sort/CRUD and reference-answer detail

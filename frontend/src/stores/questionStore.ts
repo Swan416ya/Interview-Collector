@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import {
   createQuestion,
   deleteQuestion,
-  fetchQuestions,
+  fetchQuestionsPage,
   updateQuestion,
   type CreateQuestionPayload,
   type Question,
@@ -13,18 +13,30 @@ import {
 interface QuestionState {
   loading: boolean;
   items: Question[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export const useQuestionStore = defineStore("question", {
   state: (): QuestionState => ({
     loading: false,
-    items: []
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 20
   }),
   actions: {
-    async loadQuestions(filters?: QuestionFilters) {
+    async loadQuestions(filters?: QuestionFilters & { page?: number; page_size?: number }) {
       this.loading = true;
       try {
-        this.items = await fetchQuestions(filters);
+        const page = filters?.page ?? this.page;
+        const pageSize = filters?.page_size ?? this.pageSize;
+        const data = await fetchQuestionsPage({ ...(filters ?? {}), page, page_size: pageSize });
+        this.items = data.items;
+        this.total = data.total;
+        this.page = data.page;
+        this.pageSize = data.page_size;
       } finally {
         this.loading = false;
       }

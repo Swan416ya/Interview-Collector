@@ -10,9 +10,23 @@ class PracticeSessionStartResponse(BaseModel):
     questions: list[QuestionOut]
 
 
+class PracticeSessionCustomStartRequest(BaseModel):
+    question_ids: list[int] = Field(min_length=10, max_length=10)
+
+
+class PracticeCategoryOption(BaseModel):
+    category: str
+    total_questions: int
+    selectable: bool
+
+
 class PracticeSubmitRequest(BaseModel):
     question_id: int
     user_answer: str = Field(min_length=1)
+
+
+class PracticeSkipRequest(BaseModel):
+    question_id: int
 
 
 class PracticeSubmitResponse(BaseModel):
