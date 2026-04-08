@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import { fetchPracticeSessions, submitDailyPracticeAnswer } from "../api/practice";
-import { fetchQuestions, type Question } from "../api/questions";
+import { fetchQuestionRecords, fetchQuestions, type Question } from "../api/questions";
 import { mockUserProfile } from "../mock/userProfile";
 
 interface HeatCell {
@@ -21,6 +21,7 @@ const showDailyModal = ref(false);
 const dailyAnswer = ref("");
 const dailySubmitting = ref(false);
 const dailyResult = ref<{ score: number; analysis: string; reference: string } | null>(null);
+const dailyDoneScore = ref<number | null>(null);
 
 function toDateKey(date: Date): string {
   const y = date.getFullYear();
@@ -84,8 +85,13 @@ async function loadHomeData() {
       const idx = new Date().getDate() % questions.length;
       dailyQuestionIndex.value = idx;
       dailyQuestion.value = questions[idx];
+      const records = await fetchQuestionRecords(questions[idx].id);
+      const todayKey = toDateKey(new Date());
+      const todayRecord = records.find((r) => (r.created_at ?? "").slice(0, 10) === todayKey);
+      dailyDoneScore.value = todayRecord ? Number(todayRecord.ai_score) : null;
     } else {
       dailyQuestion.value = null;
+      dailyDoneScore.value = null;
     }
   } finally {
     loading.value = false;
@@ -112,6 +118,7 @@ async function submitDailyAnswer() {
       analysis: data.analysis,
       reference: data.reference_answer
     };
+    dailyDoneScore.value = data.record.ai_score;
     await loadHomeData();
   } finally {
     dailySubmitting.value = false;
@@ -161,6 +168,9 @@ async function submitDailyAnswer() {
         <div style="margin-top: 6px;"><strong>{{ dailyQuestion.stem }}</strong></div>
         <div style="margin-top: 6px; color: #444;">
           分类：{{ dailyQuestion.category }} ｜ 难度：{{ dailyQuestion.difficulty }} ｜ 当前掌握：{{ dailyQuestion.mastery_score }}%
+        </div>
+        <div v-if="dailyDoneScore !== null" style="margin-top: 8px; color: #1e7f3b; font-weight: 600;">
+          今日已完成（{{ dailyDoneScore }}/10）
         </div>
         <div style="margin-top: 10px;">
           <button @click="openDailyModal">做题</button>

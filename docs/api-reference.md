@@ -160,6 +160,7 @@ When any API is added/removed/changed, update this file in the same commit.
 - Path: `/api/practice/sessions/{session_id}/submit`
 - Description:
   - call AI grading
+  - AI grading input only includes question stem + user answer (does not include reference answer)
   - save `PracticeRecord`
   - update question mastery score by formula:
     - `new_mastery = old_mastery * 0.7 + latest_score(0-100) * 0.3`
@@ -179,6 +180,7 @@ When any API is added/removed/changed, update this file in the same commit.
 
 - Description:
   - AI judge one daily question answer immediately
+  - AI grading input only includes question stem + user answer (does not include reference answer)
   - create one `PracticeRecord` with `session_id = null`
   - return score/analysis/reference_answer
   - update mastery by the same formula
