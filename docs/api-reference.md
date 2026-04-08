@@ -113,6 +113,23 @@ When any API is added/removed/changed, update this file in the same commit.
   - category/roles must be in local data
   - companies: link if exists, create if not
 
+### Import Preview (AI Extract)
+
+- Method: `POST`
+- Path: `/api/import/preview`
+- Request body:
+
+```json
+{
+  "raw_text": "面经原文..."
+}
+```
+
+- Description:
+  - backend calls Doubao (Ark Responses API)
+  - returns extracted `questions` JSON for user review
+  - frontend should default-select all extracted questions
+
 ## Planned APIs (Next Iteration)
 
 ### AI Import

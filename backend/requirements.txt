@@ -5,4 +5,5 @@ pydantic
 python-dotenv
 alembic
 pymysql
+httpx
 

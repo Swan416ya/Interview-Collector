@@ -7,9 +7,12 @@ class ImportQuestionItem(BaseModel):
     roles: list[str] = Field(default_factory=list)
     companies: list[str] = Field(default_factory=list)
     difficulty: int = Field(default=3, ge=1, le=5)
-    answer_reference: str | None = None
 
 
 class ImportPayload(BaseModel):
     questions: list[ImportQuestionItem] = Field(default_factory=list)
+
+
+class ImportPreviewRequest(BaseModel):
+    raw_text: str = Field(min_length=10)
 

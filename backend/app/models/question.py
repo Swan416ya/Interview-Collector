@@ -1,4 +1,6 @@
-from sqlalchemy import Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -11,4 +13,9 @@ class Question(Base):
     stem: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(64), default="未分类")
     difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
 

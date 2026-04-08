@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,6 +12,11 @@ from app.core.database import Base, engine
 from app.models import Category, Company, Question, QuestionCompany, QuestionRole, Role  # noqa: F401
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 app.add_middleware(
     CORSMiddleware,
