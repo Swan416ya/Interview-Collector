@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import axios from "axios";
 import { ref } from "vue";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
 import {
   commitImport,
   previewImport,
@@ -88,17 +89,6 @@ function toggleAll(checked: boolean) {
     <h2>AI 导入</h2>
     <p>流程：粘贴面经原文 -> 后端调用豆包提取 -> 勾选题目（默认全选）-> 导入。</p>
 
-    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-      <button @click="runPreview" :disabled="previewing">
-        {{ previewing ? "提取中..." : "1) AI 提取预览" }}
-      </button>
-      <button @click="submitImport" :disabled="committing">
-        {{ committing ? "导入中..." : "2) 导入勾选题目" }}
-      </button>
-      <button @click="toggleAll(true)">全选</button>
-      <button @click="toggleAll(false)">全不选</button>
-    </div>
-
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>
     <pre
       v-if="errorDetail"
@@ -112,6 +102,12 @@ function toggleAll(checked: boolean) {
       style="width: 100%; font-family: Consolas, monospace;"
       placeholder="把 nowcoder 面经原文粘贴到这里"
     />
+    <div style="margin-top: 10px; display: flex; gap: 8px;">
+      <button @click="runPreview" :disabled="previewing">{{ previewing ? "解析中..." : "解析" }}</button>
+      <button @click="toggleAll(true)" :disabled="!previewItems.length">全选</button>
+      <button @click="toggleAll(false)" :disabled="!previewItems.length">全不选</button>
+    </div>
+    <LoadingIndicator v-if="previewing" text="AI 正在解析原文..." />
 
     <h3 style="margin-top: 16px;">提取结果（默认全选）</h3>
     <p v-if="!previewItems.length">暂无提取结果，请先点击“AI 提取预览”。</p>
@@ -133,9 +129,18 @@ function toggleAll(checked: boolean) {
       </label>
     </div>
 
-    <div v-if="result" style="margin-top: 12px;">
+    <div v-if="result" style="margin-top: 12px; margin-bottom: 68px;">
       <h3>导入结果</h3>
       <pre>{{ JSON.stringify(result, null, 2) }}</pre>
+    </div>
+
+    <div
+      style="position: sticky; bottom: 0; z-index: 20; margin-top: 12px; padding: 10px; border-radius: 12px; border: 1px solid #e3e8f2; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);"
+    >
+      <button @click="submitImport" :disabled="committing || !previewItems.length">
+        {{ committing ? "导入中..." : "导入勾选题目" }}
+      </button>
+      <LoadingIndicator v-if="committing" text="AI 结果正在入库..." />
     </div>
   </section>
 </template>

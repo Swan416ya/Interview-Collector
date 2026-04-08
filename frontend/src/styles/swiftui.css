@@ -1,0 +1,138 @@
+:root {
+  --swift-bg: #f2f3f7;
+  --swift-surface: rgba(255, 255, 255, 0.8);
+  --swift-surface-strong: #ffffff;
+  --swift-border: rgba(255, 255, 255, 0.65);
+  --swift-text: #111827;
+  --swift-muted: #6b7280;
+  --swift-primary: #2563eb;
+  --swift-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--swift-text);
+  background: radial-gradient(circle at top right, #e7efff, var(--swift-bg) 42%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  border-radius: 12px;
+  border: 1px solid #d7dbe3;
+  padding: 8px 10px;
+}
+
+button {
+  background: linear-gradient(180deg, #ffffff, #f4f7ff);
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #b9c3d6;
+}
+
+.swift-shell {
+  width: min(1280px, 95vw);
+  margin: 22px auto;
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  gap: 14px;
+}
+
+.swift-sidebar,
+.swift-content {
+  border-radius: 20px;
+  border: 1px solid var(--swift-border);
+  background: var(--swift-surface);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--swift-shadow);
+}
+
+.swift-sidebar {
+  padding: 14px;
+  height: calc(100vh - 44px);
+  position: sticky;
+  top: 22px;
+  overflow: auto;
+}
+
+.swift-profile {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--swift-surface-strong);
+  border: 1px solid #eceff5;
+}
+
+.swift-profile img {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.swift-nav {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.swift-nav-item {
+  border-radius: 14px;
+  padding: 10px;
+  border: 1px solid transparent;
+}
+
+.swift-nav-item:hover {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: #e8ebf1;
+}
+
+.swift-nav-item.active {
+  background: #ffffff;
+  border-color: #dbe4ff;
+}
+
+.swift-nav-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.swift-nav-desc {
+  margin-top: 3px;
+  color: var(--swift-muted);
+  font-size: 12px;
+}
+
+.swift-content {
+  min-height: calc(100vh - 44px);
+  padding: 16px;
+  overflow: auto;
+}
+
+.swift-content section,
+.swift-card {
+  border-radius: 16px;
+  border: 1px solid #e9edf5;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+  padding: 14px;
+}

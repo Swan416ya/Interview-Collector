@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import axios from "axios";
 import { computed, reactive, ref } from "vue";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
 import {
   fetchPracticeSummary,
   startPracticeSession,
@@ -81,8 +82,18 @@ async function nextQuestion() {
 <template>
   <section>
     <h2>训练中心（每次 10 题）</h2>
-    <button @click="startSession" :disabled="loading">{{ loading ? "加载中..." : "开始刷题" }}</button>
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>
+
+    <div
+      v-if="!questions.length && !loading"
+      class="swift-card"
+      style="min-height: 52vh; display: grid; place-items: center;"
+    >
+      <button @click="startSession">开始刷题</button>
+    </div>
+    <div v-if="loading" class="swift-card" style="min-height: 200px; display: grid; place-items: center;">
+      <LoadingIndicator text="正在准备题目..." />
+    </div>
 
     <div v-if="currentQuestion && !finished" style="margin-top: 14px; border: 1px solid #ddd; padding: 12px;">
       <p>第 {{ currentIndex + 1 }} / {{ questions.length }} 题</p>
@@ -94,6 +105,7 @@ async function nextQuestion() {
         <button @click="submitCurrent" :disabled="submitting">{{ submitting ? "判题中..." : "提交并判题" }}</button>
         <button @click="nextQuestion">下一题</button>
       </div>
+      <LoadingIndicator v-if="submitting" text="AI 正在判题..." />
 
       <div v-if="perQuestionResult[currentQuestion.id]" style="margin-top: 10px; background: #f7fbff; padding: 10px;">
         <p><strong>得分：</strong>{{ perQuestionResult[currentQuestion.id].score }} / 10</p>

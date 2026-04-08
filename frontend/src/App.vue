@@ -1,16 +1,58 @@
+<script setup lang="ts">
+import {
+  BookOpen,
+  Brain,
+  FolderKanban,
+  History,
+  House,
+  UploadCloud,
+  UserCircle2
+} from "lucide-vue-next";
+import { mockUserProfile } from "./mock/userProfile";
+
+const navItems = [
+  { to: "/", title: "用户主页", desc: "个人信息、活跃图、每日一题", icon: House },
+  { to: "/questions", title: "题库", desc: "筛选、排序、做题记录", icon: BookOpen },
+  { to: "/import", title: "导入", desc: "AI 提取并入库面经题目", icon: UploadCloud },
+  { to: "/practice", title: "训练", desc: "10题一轮，AI即时判题", icon: Brain },
+  { to: "/practice-history", title: "刷题记录", desc: "查看每轮会话与得分", icon: History },
+  { to: "/categories", title: "分类/岗位", desc: "统一维护分类与岗位", icon: FolderKanban }
+];
+</script>
+
 <template>
-  <main style="max-width: 960px; margin: 40px auto; font-family: Arial, sans-serif;">
-    <h1>Interview Collector</h1>
-    <nav style="display: flex; gap: 12px; margin: 12px 0 20px;">
-      <router-link to="/">首页</router-link>
-      <router-link to="/questions">题库</router-link>
-      <router-link to="/categories">分类</router-link>
-      <router-link to="/roles">岗位</router-link>
-      <router-link to="/import">导入</router-link>
-      <router-link to="/practice">训练</router-link>
-      <router-link to="/practice-history">刷题记录</router-link>
-    </nav>
-    <router-view />
+  <main class="swift-shell">
+    <aside class="swift-sidebar">
+      <router-link to="/" class="swift-profile">
+        <img :src="mockUserProfile.avatarUrl" alt="avatar" />
+        <div>
+          <div style="font-weight: 700;">{{ mockUserProfile.username }}</div>
+          <div style="font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 4px;">
+            <UserCircle2 :size="14" /> UID {{ mockUserProfile.uid }}
+          </div>
+        </div>
+      </router-link>
+
+      <nav class="swift-nav">
+        <router-link
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          class="swift-nav-item"
+          active-class="active"
+        >
+          <div class="swift-nav-title">
+            <component :is="item.icon" :size="16" />
+            <span>{{ item.title }}</span>
+          </div>
+          <div class="swift-nav-desc">{{ item.desc }}</div>
+        </router-link>
+      </nav>
+    </aside>
+
+    <section class="swift-content">
+      <router-view />
+    </section>
   </main>
 </template>
 

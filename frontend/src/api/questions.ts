@@ -62,3 +62,18 @@ export async function fetchQuestionRecords(questionId: number): Promise<Practice
   return data;
 }
 
+export interface BackfillReferenceAnswersResponse {
+  scanned: number;
+  updated: number;
+  failed: Array<{ question_id: number; error: string }>;
+}
+
+export async function backfillReferenceAnswers(limit = 50): Promise<BackfillReferenceAnswersResponse> {
+  const { data } = await apiClient.post<BackfillReferenceAnswersResponse>(
+    `/api/questions/backfill-reference-answers`,
+    null,
+    { params: { limit }, timeout: 120000 }
+  );
+  return data;
+}
+
