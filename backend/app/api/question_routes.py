@@ -11,6 +11,7 @@ from app.schemas.question import (
     QuestionOut,
     QuestionUpdate,
 )
+from app.services.ai_service import call_doubao_reference_answer
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -18,8 +19,9 @@ router = APIRouter(prefix="/api/questions", tags=["questions"])
 @router.get("", response_model=list[QuestionOut])
 def list_questions(
     category: str | None = Query(default=None),
-    keyword: str | None = Query(default=None),
     difficulty: int | None = Query(default=None, ge=1, le=5),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
     db: Session = Depends(get_db),
 ):
     stmt = select(Question)
@@ -27,19 +29,23 @@ def list_questions(
         stmt = stmt.where(Question.category == category.strip())
     if difficulty is not None:
         stmt = stmt.where(Question.difficulty == difficulty)
-    if keyword:
-        like = f"%{keyword.strip()}%"
-        stmt = stmt.where(Question.stem.like(like))
-    stmt = stmt.order_by(Question.id.desc())
+
+    order_desc = sort_order.lower() != "asc"
+    if sort_by == "mastery_score":
+        stmt = stmt.order_by(Question.mastery_score.desc() if order_desc else Question.mastery_score.asc())
+    else:
+        stmt = stmt.order_by(Question.created_at.desc() if order_desc else Question.created_at.asc())
     return db.scalars(stmt).all()
 
 
 @router.post("", response_model=QuestionOut)
 def create_question(payload: QuestionCreate, db: Session = Depends(get_db)):
+    reference_answer = call_doubao_reference_answer(payload.stem)
     item = Question(
         stem=payload.stem,
         category=payload.category,
         difficulty=payload.difficulty,
+        reference_answer=reference_answer,
     )
     db.add(item)
     db.commit()
@@ -85,6 +91,7 @@ def create_question_record(question_id: int, payload: PracticeRecordCreate, db: 
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
     record = PracticeRecord(
+        session_id=payload.session_id,
         question_id=question_id,
         user_answer=payload.user_answer,
         ai_answer=payload.ai_answer,
@@ -96,9 +103,29 @@ def create_question_record(question_id: int, payload: PracticeRecordCreate, db: 
     avg_score = db.scalar(
         select(func.avg(PracticeRecord.ai_score)).where(PracticeRecord.question_id == question_id)
     )
-    q.mastery_score = int(round(float(avg_score or 0)))
+    q.mastery_score = int(round(float(avg_score or 0) * 10))
 
     db.commit()
     db.refresh(record)
     return record
+
+
+@router.post("/backfill-reference-answers")
+def backfill_reference_answers(
+    limit: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    candidates = db.scalars(
+        select(Question).where((Question.reference_answer.is_(None)) | (Question.reference_answer == "")).limit(limit)
+    ).all()
+    updated = 0
+    failed: list[dict] = []
+    for q in candidates:
+        try:
+            q.reference_answer = call_doubao_reference_answer(q.stem)
+            updated += 1
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"question_id": q.id, "error": str(exc)})
+    db.commit()
+    return {"scanned": len(candidates), "updated": updated, "failed": failed}
 

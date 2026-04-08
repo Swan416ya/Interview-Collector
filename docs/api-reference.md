@@ -49,6 +49,7 @@ When any API is added/removed/changed, update this file in the same commit.
 - Method: `POST`
 - Path: `/api/questions`
 - Description: Create a new question
+- Note: backend will call AI to generate and save `reference_answer`
 - Request body:
 
 ```json
@@ -112,6 +113,17 @@ When any API is added/removed/changed, update this file in the same commit.
 - Description:
   - category/roles must be in local data
   - companies: link if exists, create if not
+  - each imported question auto-generates `reference_answer` via AI
+
+### Backfill Missing Reference Answers
+
+- Method: `POST`
+- Path: `/api/questions/backfill-reference-answers`
+- Query:
+  - `limit` (default 50, max 500)
+- Description:
+  - scan questions with empty `reference_answer`
+  - call AI to generate and fill missing reference answers
 
 ### Import Preview (AI Extract)
 

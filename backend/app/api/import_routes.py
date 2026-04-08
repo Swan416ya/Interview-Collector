@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.models.question import Question
 from app.models.taxonomy import Category, Company, QuestionCompany, QuestionRole, Role
 from app.schemas.importing import ImportPayload, ImportPreviewRequest
-from app.services.ai_service import call_doubao_extract
+from app.services.ai_service import call_doubao_extract, call_doubao_reference_answer
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
@@ -198,7 +198,12 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
                 detail=f"Invalid roles: {invalid_roles}. Roles must be from local role list.",
             )
 
-        q = Question(stem=item.stem.strip(), category=item.category_name, difficulty=item.difficulty)
+        q = Question(
+            stem=item.stem.strip(),
+            category=item.category_name,
+            difficulty=item.difficulty,
+            reference_answer=call_doubao_reference_answer(item.stem.strip()),
+        )
         db.add(q)
         db.flush()
         created_questions += 1

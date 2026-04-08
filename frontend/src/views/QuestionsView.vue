@@ -14,7 +14,9 @@ const form = reactive({
 
 const filters = reactive({
   category: "",
-  difficulty: undefined as number | undefined
+  difficulty: "",
+  sortBy: "created_at",
+  sortOrder: "desc"
 });
 const categoryOptions = ref<string[]>([]);
 
@@ -26,9 +28,11 @@ const editForm = reactive({
 });
 const showCreateModal = ref(false);
 const showRecordsModal = ref(false);
+const showDetailModal = ref(false);
 const currentQuestionTitle = ref("");
 const currentQuestionId = ref<number | null>(null);
 const records = ref<PracticeRecord[]>([]);
+const currentReferenceAnswer = ref("");
 
 const filteredMastery = ref(0);
 
@@ -50,22 +54,25 @@ async function submit() {
   });
   form.stem = "";
   showCreateModal.value = false;
-  recalcMastery();
+  await runFilter();
 }
 
 async function runFilter() {
   await store.loadQuestions({
     category: filters.category.trim() || undefined,
-    difficulty: filters.difficulty || undefined
+    difficulty: filters.difficulty ? Number(filters.difficulty) : undefined,
+    sort_by: filters.sortBy as "created_at" | "mastery_score",
+    sort_order: filters.sortOrder as "asc" | "desc"
   });
   recalcMastery();
 }
 
 async function resetFilter() {
   filters.category = "";
-  filters.difficulty = undefined;
-  await store.loadQuestions();
-  recalcMastery();
+  filters.difficulty = "";
+  filters.sortBy = "created_at";
+  filters.sortOrder = "desc";
+  await runFilter();
 }
 
 function startEdit(id: number, stem: string, category: string, difficulty: number) {
@@ -104,6 +111,12 @@ async function openRecords(id: number, stem: string) {
   showRecordsModal.value = true;
 }
 
+function openDetail(stem: string, referenceAnswer: string) {
+  currentQuestionTitle.value = stem;
+  currentReferenceAnswer.value = referenceAnswer || "";
+  showDetailModal.value = true;
+}
+
 onMounted(async () => {
   const cats = await fetchCategories();
   categoryOptions.value = cats.map((c) => c.name);
@@ -127,13 +140,21 @@ onMounted(async () => {
         <option value="">全部分类</option>
         <option v-for="c in categoryOptions" :key="c" :value="c">{{ c }}</option>
       </select>
-      <select v-model.number="filters.difficulty" @change="runFilter">
-        <option :value="undefined">全部难度</option>
-        <option :value="1">难度 1</option>
-        <option :value="2">难度 2</option>
-        <option :value="3">难度 3</option>
-        <option :value="4">难度 4</option>
-        <option :value="5">难度 5</option>
+      <select v-model="filters.difficulty" @change="runFilter">
+        <option value="">全部难度</option>
+        <option value="1">难度 1</option>
+        <option value="2">难度 2</option>
+        <option value="3">难度 3</option>
+        <option value="4">难度 4</option>
+        <option value="5">难度 5</option>
+      </select>
+      <select v-model="filters.sortBy" @change="runFilter">
+        <option value="created_at">按时间排序</option>
+        <option value="mastery_score">按掌握程度排序</option>
+      </select>
+      <select v-model="filters.sortOrder" @change="runFilter">
+        <option value="desc">降序</option>
+        <option value="asc">升序</option>
       </select>
       <div style="display: flex; gap: 8px;">
         <button @click="resetFilter">重置</button>
@@ -157,6 +178,7 @@ onMounted(async () => {
           <div style="font-size: 12px; color: #2c7;">掌握程度：{{ q.mastery_score }}%</div>
           <div style="font-size: 12px; color: #666;">入库时间：{{ q.created_at }}</div>
           <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <button @click="openDetail(q.stem, q.reference_answer)">详情</button>
             <button @click="openRecords(q.id, q.stem)">做题记录</button>
             <button @click="startEdit(q.id, q.stem, q.category, q.difficulty)">编辑</button>
             <button @click="remove(q.id)">删除</button>
@@ -180,6 +202,18 @@ onMounted(async () => {
           <button @click="submit">保存</button>
           <button @click="showCreateModal = false">取消</button>
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showDetailModal"
+      style="position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: grid; place-items: center;"
+    >
+      <div style="background: #fff; width: 860px; max-width: 95vw; padding: 16px; border-radius: 8px;">
+        <h3>题目详情</h3>
+        <p><strong>题目：</strong>{{ currentQuestionTitle }}</p>
+        <p><strong>参考答案：</strong>{{ currentReferenceAnswer || "暂无" }}</p>
+        <button @click="showDetailModal = false">关闭</button>
       </div>
     </div>
 

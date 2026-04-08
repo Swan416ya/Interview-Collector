@@ -8,6 +8,7 @@
       <router-link to="/roles">岗位</router-link>
       <router-link to="/import">导入</router-link>
       <router-link to="/practice">训练</router-link>
+      <router-link to="/practice-history">刷题记录</router-link>
     </nav>
     <router-view />
   </main>

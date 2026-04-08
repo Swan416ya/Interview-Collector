@@ -78,13 +78,14 @@ http://localhost:5173
   - `GET /health`
   - `GET /api/questions`
   - `POST /api/questions`
+  - `POST /api/questions/backfill-reference-answers`
   - `GET /api/practice/ping`
 - Frontend
-  - Home / Questions / Practice pages
-  - Questions page supports adding and listing questions
+  - Home / Questions / Practice / Practice History pages
+  - Questions page supports filter/sort/CRUD and reference-answer detail
 - Database
   - MySQL + Alembic migration initialized
-  - Existing tables: `questions`, `alembic_version`
+  - Existing tables include: `questions`, `practice_records`, `practice_sessions`, `alembic_version`
 
 ## Roadmap (Planned)
 

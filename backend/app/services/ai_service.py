@@ -233,3 +233,49 @@ def call_doubao_extract(prompt: str, raw_text: str) -> tuple[dict, dict]:
     parsed = _extract_json_object(output_text)
     return parsed, data
 
+
+def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
+    prompt = """
+你是计算机面试官。请对用户回答打分并给出解析。
+规则：
+1) 只输出 JSON，不要任何解释文字。
+2) score 为 0-10 的整数。
+3) analysis 是针对本次回答的解析，必须小于 200 字。
+4) 输出格式必须为：
+{
+  "score": 0,
+  "analysis": "string"
+}
+""".strip()
+    input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
+    result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text)
+    if "score" not in result or "analysis" not in result:
+        raise HTTPException(status_code=502, detail="AI grading output missing score or analysis")
+    try:
+        score = int(result["score"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="AI grading score must be int") from exc
+    score = max(0, min(10, score))
+    analysis = str(result.get("analysis", "")).strip()
+    if len(analysis) > 200:
+        analysis = analysis[:200]
+    return {"score": score, "analysis": analysis}
+
+
+def call_doubao_reference_answer(question_stem: str) -> str:
+    prompt = """
+你是计算机面试题参考答案生成器。
+规则：
+1) 只输出 JSON，不要任何解释文字。
+2) 输出格式：
+{
+  "reference_answer": "string"
+}
+3) reference_answer 控制在 120 字以内，直接给要点答案。
+""".strip()
+    result, _ = call_doubao_extract(prompt=prompt, raw_text=f"题目：{question_stem}")
+    answer = str(result.get("reference_answer", "")).strip()
+    if len(answer) > 120:
+        answer = answer[:120]
+    return answer
+
