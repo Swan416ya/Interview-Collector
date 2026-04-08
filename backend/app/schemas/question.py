@@ -22,5 +22,23 @@ class QuestionOut(BaseModel):
     stem: str
     category: str
     difficulty: int
+    mastery_score: int
+    created_at: datetime
+
+
+class PracticeRecordCreate(BaseModel):
+    user_answer: str = ""
+    ai_answer: str = ""
+    ai_score: int = Field(default=0, ge=0, le=100)
+
+
+class PracticeRecordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    question_id: int
+    user_answer: str
+    ai_answer: str
+    ai_score: int
     created_at: datetime
 

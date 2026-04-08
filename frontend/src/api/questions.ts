@@ -16,7 +16,6 @@ export interface CreateQuestionPayload {
 
 export interface QuestionFilters {
   category?: string;
-  keyword?: string;
   difficulty?: number;
 }
 
@@ -24,6 +23,21 @@ export interface UpdateQuestionPayload {
   stem: string;
   category: string;
   difficulty: number;
+}
+
+export interface PracticeRecord {
+  id: number;
+  question_id: number;
+  user_answer: string;
+  ai_answer: string;
+  ai_score: number;
+  created_at: string;
+}
+
+export interface CreatePracticeRecordPayload {
+  user_answer: string;
+  ai_answer: string;
+  ai_score: number;
 }
 
 export async function fetchQuestions(filters?: QuestionFilters): Promise<Question[]> {
@@ -43,5 +57,18 @@ export async function updateQuestion(id: number, payload: UpdateQuestionPayload)
 
 export async function deleteQuestion(id: number): Promise<void> {
   await apiClient.delete(`/api/questions/${id}`);
+}
+
+export async function fetchQuestionRecords(questionId: number): Promise<PracticeRecord[]> {
+  const { data } = await apiClient.get<PracticeRecord[]>(`/api/questions/${questionId}/records`);
+  return data;
+}
+
+export async function createQuestionRecord(
+  questionId: number,
+  payload: CreatePracticeRecordPayload
+): Promise<PracticeRecord> {
+  const { data } = await apiClient.post<PracticeRecord>(`/api/questions/${questionId}/records`, payload);
+  return data;
 }
 

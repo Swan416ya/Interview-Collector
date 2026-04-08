@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.question import Question
-from app.schemas.question import QuestionCreate, QuestionOut, QuestionUpdate
+from app.models.question import PracticeRecord, Question
+from app.schemas.question import (
+    PracticeRecordCreate,
+    PracticeRecordOut,
+    QuestionCreate,
+    QuestionOut,
+    QuestionUpdate,
+)
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -62,4 +68,37 @@ def delete_question(question_id: int, db: Session = Depends(get_db)):
     db.delete(item)
     db.commit()
     return {"deleted": True}
+
+
+@router.get("/{question_id}/records", response_model=list[PracticeRecordOut])
+def list_question_records(question_id: int, db: Session = Depends(get_db)):
+    q = db.get(Question, question_id)
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    stmt = select(PracticeRecord).where(PracticeRecord.question_id == question_id).order_by(PracticeRecord.id.desc())
+    return db.scalars(stmt).all()
+
+
+@router.post("/{question_id}/records", response_model=PracticeRecordOut)
+def create_question_record(question_id: int, payload: PracticeRecordCreate, db: Session = Depends(get_db)):
+    q = db.get(Question, question_id)
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    record = PracticeRecord(
+        question_id=question_id,
+        user_answer=payload.user_answer,
+        ai_answer=payload.ai_answer,
+        ai_score=payload.ai_score,
+    )
+    db.add(record)
+    db.flush()
+
+    avg_score = db.scalar(
+        select(func.avg(PracticeRecord.ai_score)).where(PracticeRecord.question_id == question_id)
+    )
+    q.mastery_score = int(round(float(avg_score or 0)))
+
+    db.commit()
+    db.refresh(record)
+    return record
 
