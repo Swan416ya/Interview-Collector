@@ -50,3 +50,21 @@ class PracticeSessionOut(BaseModel):
     completed_at: datetime | None
     created_at: datetime
 
+
+class PracticeActivityDayOut(BaseModel):
+    """One calendar day in the heatmap window (Asia/Shanghai)."""
+
+    date: str
+    count: int
+    level: int = Field(ge=0, le=4, description="0=empty, 1-4 green intensity by count tiers")
+
+
+class PracticeActivityResponse(BaseModel):
+    timezone: str
+    start_date: str
+    end_date: str
+    today: str
+    total_questions: int
+    active_days: int
+    days: list[PracticeActivityDayOut]
+

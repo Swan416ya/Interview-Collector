@@ -3,6 +3,7 @@ uvicorn[standard]
 sqlalchemy
 pydantic
 python-dotenv
+tzdata
 alembic
 pymysql
 cryptography

@@ -1,12 +1,16 @@
-from datetime import datetime
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+import zoneinfo
 
 from app.core.database import get_db
 from app.models.question import PracticeRecord, PracticeSession, Question
 from app.schemas.practice import (
+    PracticeActivityDayOut,
+    PracticeActivityResponse,
     PracticeSkipRequest,
     PracticeCategoryOption,
     PracticeSessionCustomStartRequest,
@@ -19,6 +23,96 @@ from app.schemas.practice import (
 from app.services.ai_service import call_doubao_grade
 
 router = APIRouter(prefix="/api/practice", tags=["practice"])
+
+try:
+    _ACTIVITY_TZ = zoneinfo.ZoneInfo("Asia/Shanghai")
+except zoneinfo.ZoneInfoNotFoundError:
+    _ACTIVITY_TZ = timezone(timedelta(hours=8))
+_NUM_WEEKS = 53
+
+
+def _naive_dt_to_shanghai_date(dt: datetime) -> date:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_ACTIVITY_TZ).date()
+
+
+def _sunday_start_of_week(d: date) -> date:
+    # Monday=0 .. Sunday=6 in Python; we want week starting Sunday (GitHub-style columns).
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def _count_level(n: int) -> int:
+    """Match frontend heatmap: 0 gray; 1–9 light; 10–19 mid; 20–49 high; 50+ darkest."""
+    if n <= 0:
+        return 0
+    if n < 10:
+        return 1
+    if n < 20:
+        return 2
+    if n < 50:
+        return 3
+    return 4
+
+
+@router.get("/activity", response_model=PracticeActivityResponse)
+def practice_activity_heatmap(db: Session = Depends(get_db)):
+    """
+    Dense last-53-week window (371 days), Sunday-first columns, dates in Asia/Shanghai.
+    Count = number of practice_records rows that day (submit + skip + daily).
+    """
+    today = datetime.now(_ACTIVITY_TZ).date()
+    end_sunday = _sunday_start_of_week(today)
+    start_sunday = end_sunday - timedelta(weeks=_NUM_WEEKS - 1)
+    end_last = start_sunday + timedelta(days=_NUM_WEEKS * 7 - 1)
+
+    lower_naive = (
+        datetime.combine(start_sunday, datetime.min.time(), tzinfo=_ACTIVITY_TZ)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    upper_exclusive_naive = (
+        datetime.combine(end_last + timedelta(days=1), datetime.min.time(), tzinfo=_ACTIVITY_TZ)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+
+    rows = db.scalars(
+        select(PracticeRecord.created_at).where(
+            PracticeRecord.created_at >= lower_naive,
+            PracticeRecord.created_at < upper_exclusive_naive,
+        )
+    ).all()
+
+    per_day: Counter[date] = Counter()
+    for ts in rows:
+        per_day[_naive_dt_to_shanghai_date(ts)] += 1
+
+    days_out: list[PracticeActivityDayOut] = []
+    total_questions = 0
+    active_days = 0
+    d = start_sunday
+    while d <= end_last:
+        c = int(per_day.get(d, 0))
+        total_questions += c
+        if c > 0:
+            active_days += 1
+        ds = d.isoformat()
+        if d > today:
+            days_out.append(PracticeActivityDayOut(date=ds, count=0, level=0))
+        else:
+            days_out.append(PracticeActivityDayOut(date=ds, count=c, level=_count_level(c)))
+        d += timedelta(days=1)
+
+    return PracticeActivityResponse(
+        timezone="Asia/Shanghai",
+        start_date=start_sunday.isoformat(),
+        end_date=end_last.isoformat(),
+        today=today.isoformat(),
+        total_questions=total_questions,
+        active_days=active_days,
+        days=days_out,
+    )
 
 
 def _update_mastery_by_formula(question: Question, latest_score_0_10: int) -> None:

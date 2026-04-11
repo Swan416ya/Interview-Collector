@@ -112,6 +112,35 @@ When any API is added/removed/changed, update this file in the same commit.
 }
 ```
 
+### Practice Activity Heatmap (daily question count)
+
+- Method: `GET`
+- Path: `/api/practice/activity`
+- Description:
+  - returns a **dense** list of **371** calendar days (53 weeks × 7 days) for a GitHub-style heatmap
+  - dates use **`Asia/Shanghai`** (calendar date, not UTC)
+  - window: from the Sunday of the week **52 weeks before** the Sunday of the current week, through **Saturday** of the current week (inclusive of all cells in the grid)
+  - **`count`**: number of `practice_records` rows whose `created_at` falls on that calendar day in Shanghai (each submit, skip, or daily submit counts as one)
+  - **`level`**: `0` gray (0 questions or future days); `1` 1–9; `2` 10–19; `3` 20–49; `4` 50+
+  - **`total_questions`**: sum of `count` over the window (only days ≤ `today` contribute non-zero counts; future cells are `0`)
+  - **`active_days`**: days in the window with `count > 0` and `date ≤ today`
+- Response example:
+
+```json
+{
+  "timezone": "Asia/Shanghai",
+  "start_date": "2025-04-06",
+  "end_date": "2026-04-11",
+  "today": "2026-04-11",
+  "total_questions": 128,
+  "active_days": 42,
+  "days": [
+    { "date": "2025-04-06", "count": 0, "level": 0 },
+    { "date": "2025-04-07", "count": 3, "level": 1 }
+  ]
+}
+```
+
 ### Practice Categories (for training selector)
 
 - Method: `GET`

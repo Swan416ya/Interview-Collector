@@ -42,6 +42,22 @@ export interface PracticeSessionListItem {
   created_at: string;
 }
 
+export interface PracticeActivityDay {
+  date: string;
+  count: number;
+  level: number;
+}
+
+export interface PracticeActivityResponse {
+  timezone: string;
+  start_date: string;
+  end_date: string;
+  today: string;
+  total_questions: number;
+  active_days: number;
+  days: PracticeActivityDay[];
+}
+
 export interface PracticeSessionRecordsResponse {
   session_id: number;
   total_score: number;
@@ -108,6 +124,11 @@ export async function fetchPracticeSummary(sessionId: number): Promise<PracticeS
 
 export async function fetchPracticeSessions(): Promise<PracticeSessionListItem[]> {
   const { data } = await apiClient.get<PracticeSessionListItem[]>("/api/practice/sessions");
+  return data;
+}
+
+export async function fetchPracticeActivity(): Promise<PracticeActivityResponse> {
+  const { data } = await apiClient.get<PracticeActivityResponse>("/api/practice/activity");
   return data;
 }
 
