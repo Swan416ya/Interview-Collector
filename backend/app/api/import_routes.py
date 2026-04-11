@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -6,10 +8,51 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.question import Question
 from app.models.taxonomy import Category, Company, QuestionCompany, QuestionRole, Role
-from app.schemas.importing import ImportPayload, ImportPreviewRequest
+from app.schemas.importing import ImportPayload, ImportPreviewRequest, ImportQuestionItem
 from app.services.ai_service import call_doubao_extract, call_doubao_reference_answer
 
 router = APIRouter(prefix="/api/import", tags=["import"])
+logger = logging.getLogger(__name__)
+
+
+def _fallback_category(category_names: set[str]) -> str:
+    if "未分类" in category_names:
+        return "未分类"
+    return sorted(category_names)[0]
+
+
+def _normalize_for_commit(
+    item: ImportQuestionItem,
+    category_names: set[str],
+    role_by_name: dict[str, Role],
+) -> tuple[str, list[str]]:
+    """
+    AI 偶尔会输出不在白名单里的 category/role。入库时收敛到合法值，避免 400。
+    - 分类：不在库中则改为「未分类」（若存在），否则取字典序第一个分类。
+    - 岗位：仅保留库中存在的名称；可退化为空列表（题目可无关联岗位）。
+    """
+    raw_cat = (item.category_name or "").strip()
+    if raw_cat in category_names:
+        cat = raw_cat
+    else:
+        cat = _fallback_category(category_names)
+        logger.warning(
+            "import commit: category %r not in DB, using %r (stem=%.80r)",
+            raw_cat,
+            cat,
+            item.stem,
+        )
+
+    raw_roles = list(item.roles) if item.roles else []
+    valid_roles = [r for r in raw_roles if r in role_by_name]
+    dropped = [r for r in raw_roles if r not in role_by_name]
+    if dropped:
+        logger.warning(
+            "import commit: dropped invalid roles %r (stem=%.80r)",
+            dropped,
+            item.stem,
+        )
+    return cat, valid_roles
 
 
 def _build_extract_prompt(categories: list[str], roles: list[str]) -> str:
@@ -184,23 +227,21 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
     created_companies = 0
     linked_roles = 0
     linked_companies = 0
+    category_fallbacks = 0
+    role_lists_adjusted = 0
 
     for item in payload.questions:
-        if item.category_name not in category_names:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid category_name: {item.category_name}. Must be one of local categories.",
-            )
-        invalid_roles = [r for r in item.roles if r not in role_by_name]
-        if invalid_roles:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid roles: {invalid_roles}. Roles must be from local role list.",
-            )
+        raw_cat = (item.category_name or "").strip()
+        raw_roles = list(item.roles or [])
+        cat, role_names = _normalize_for_commit(item, category_names, role_by_name)
+        if raw_cat not in category_names:
+            category_fallbacks += 1
+        if set(role_names) != set(raw_roles):
+            role_lists_adjusted += 1
 
         q = Question(
             stem=item.stem.strip(),
-            category=item.category_name,
+            category=cat,
             difficulty=item.difficulty,
             reference_answer=call_doubao_reference_answer(item.stem.strip()),
         )
@@ -208,7 +249,7 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
         db.flush()
         created_questions += 1
 
-        for role_name in set(item.roles):
+        for role_name in set(role_names):
             rel = QuestionRole(question_id=q.id, role_id=role_by_name[role_name].id)
             db.add(rel)
             linked_roles += 1
@@ -233,5 +274,7 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
         "created_companies": created_companies,
         "linked_roles": linked_roles,
         "linked_companies": linked_companies,
+        "category_fallbacks": category_fallbacks,
+        "role_lists_adjusted": role_lists_adjusted,
     }
 

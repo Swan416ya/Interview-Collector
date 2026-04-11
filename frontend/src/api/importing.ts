@@ -25,6 +25,10 @@ export interface ImportCommitResponse {
   created_companies: number;
   linked_roles: number;
   linked_companies: number;
+  /** AI 分类不在库中，已改为「未分类」或首个可用分类 */
+  category_fallbacks?: number;
+  /** 有岗位名不在库中，已剔除后入库 */
+  role_lists_adjusted?: number;
 }
 
 export async function fetchPromptTemplate(): Promise<PromptTemplateResponse> {

@@ -275,9 +275,13 @@ When any API is added/removed/changed, update this file in the same commit.
 - Method: `POST`
 - Path: `/api/import/commit`
 - Description:
-  - category/roles must be in local data
+  - **category**：若 AI 返回的名称不在本地分类表中，自动改为 **「未分类」**（若存在），否则改为字典序第一个分类；不会因此返回 400
+  - **roles**：仅保留本地岗位表中存在的名称；可退化为空列表；不会因此返回 400
   - companies: link if exists, create if not
   - each imported question auto-generates `reference_answer` via AI
+- Response extra fields:
+  - `category_fallbacks`: 发生分类回退的题目数量
+  - `role_lists_adjusted`: 岗位列表被裁剪过的题目数量
 
 ### Backfill Missing Reference Answers
 

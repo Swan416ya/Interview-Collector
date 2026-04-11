@@ -150,6 +150,13 @@ function toggleAll(checked: boolean) {
 
     <div v-if="result" style="margin-top: 12px; margin-bottom: 68px;">
       <h3>导入结果</h3>
+      <p
+        v-if="(result.category_fallbacks ?? 0) > 0 || (result.role_lists_adjusted ?? 0) > 0"
+        style="color: #856404; background: #fff8e6; border: 1px solid #ffe8a3; padding: 8px 10px; border-radius: 8px; font-size: 13px;"
+      >
+        部分题目与本地分类/岗位不完全一致，已自动调整：
+        分类回退 {{ result.category_fallbacks ?? 0 }} 道，岗位列表裁剪 {{ result.role_lists_adjusted ?? 0 }} 道（详见后端日志）。
+      </p>
       <pre>{{ JSON.stringify(result, null, 2) }}</pre>
     </div>
 
