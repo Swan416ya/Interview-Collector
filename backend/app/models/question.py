@@ -42,7 +42,8 @@ class PracticeSession(Base):
     __tablename__ = "practice_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    total_score: Mapped[int] = mapped_column(Integer, default=0)  # 0-100, ten questions total
+    total_score: Mapped[int] = mapped_column(Integer, default=0)  # sum of ai_score, max question_count * 10
+    question_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

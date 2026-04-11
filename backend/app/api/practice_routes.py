@@ -1,7 +1,7 @@
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import zoneinfo
@@ -9,10 +9,11 @@ import zoneinfo
 from app.core.database import get_db
 from app.models.question import PracticeRecord, PracticeSession, Question
 from app.schemas.practice import (
+    ALLOWED_SESSION_SIZES,
     PracticeActivityDayOut,
     PracticeActivityResponse,
+    PracticeCategoriesResponse,
     PracticeSkipRequest,
-    PracticeCategoryOption,
     PracticeSessionCustomStartRequest,
     PracticeSessionOut,
     PracticeSessionStartResponse,
@@ -122,64 +123,80 @@ def _update_mastery_by_formula(question: Question, latest_score_0_10: int) -> No
     question.mastery_score = max(0, min(100, int(new_mastery)))
 
 
+def _finalize_session_if_done(db: Session, session: PracticeSession) -> None:
+    scores = db.scalars(select(PracticeRecord.ai_score).where(PracticeRecord.session_id == session.id)).all()
+    if len(scores) >= session.question_count:
+        session.total_score = int(sum(scores))
+        session.completed_at = datetime.utcnow()
+
+
 @router.get("/ping")
 def practice_ping() -> dict:
     return {"message": "practice module ready"}
 
 
 @router.post("/sessions/start", response_model=PracticeSessionStartResponse)
-def start_practice_session(category: str | None = None, db: Session = Depends(get_db)):
+def start_practice_session(
+    category: str | None = None,
+    count: int = Query(10, description="Number of questions: 5, 10, or 15"),
+    db: Session = Depends(get_db),
+):
+    if count not in ALLOWED_SESSION_SIZES:
+        raise HTTPException(status_code=400, detail="count must be 5, 10, or 15")
     stmt = select(Question)
     if category:
         stmt = stmt.where(Question.category == category)
-    questions = db.scalars(stmt.order_by(func.rand()).limit(10)).all()
-    if len(questions) < 10:
-        if category:
-            raise HTTPException(status_code=400, detail=f"Category '{category}' has less than 10 questions")
-        raise HTTPException(status_code=400, detail="Need at least 10 questions in the question bank")
-    session = PracticeSession(total_score=0)
+    questions = db.scalars(stmt.order_by(func.rand()).limit(count)).all()
+    if len(questions) < count:
+        scope = f"Category '{category}'" if category else "Question bank (all categories)"
+        raise HTTPException(
+            status_code=400,
+            detail=f"{scope} has only {len(questions)} question(s); need at least {count} to start this session",
+        )
+    session = PracticeSession(total_score=0, question_count=count)
     db.add(session)
     db.commit()
     db.refresh(session)
-    return {"session_id": session.id, "questions": questions}
+    return {"session_id": session.id, "questions": questions, "question_count": count}
 
 
 @router.post("/sessions/start/custom", response_model=PracticeSessionStartResponse)
 def start_practice_session_custom(payload: PracticeSessionCustomStartRequest, db: Session = Depends(get_db)):
     unique_ids = list(dict.fromkeys(payload.question_ids))
-    if len(unique_ids) != 10:
-        raise HTTPException(status_code=400, detail="question_ids must contain 10 unique question ids")
+    n = len(unique_ids)
 
     questions = db.scalars(select(Question).where(Question.id.in_(unique_ids))).all()
-    if len(questions) != 10:
+    if len(questions) != n:
         raise HTTPException(status_code=400, detail="Some question ids do not exist")
 
     # Return in the incoming order so client can keep its planned sequence.
     question_map = {q.id: q for q in questions}
     ordered_questions = [question_map[qid] for qid in unique_ids if qid in question_map]
 
-    session = PracticeSession(total_score=0)
+    session = PracticeSession(total_score=0, question_count=n)
     db.add(session)
     db.commit()
     db.refresh(session)
-    return {"session_id": session.id, "questions": ordered_questions}
+    return {"session_id": session.id, "questions": ordered_questions, "question_count": n}
 
 
-@router.get("/categories", response_model=list[PracticeCategoryOption])
+@router.get("/categories", response_model=PracticeCategoriesResponse)
 def list_practice_categories(db: Session = Depends(get_db)):
     rows = db.execute(
         select(Question.category, func.count(Question.id))
         .group_by(Question.category)
         .order_by(Question.category.asc())
     ).all()
-    return [
+    total_all = int(db.scalar(select(func.count()).select_from(Question)) or 0)
+    categories = [
         {
             "category": category or "未分类",
             "total_questions": int(total),
-            "selectable": int(total) >= 10,
+            "selectable": int(total) >= 5,
         }
         for category, total in rows
     ]
+    return PracticeCategoriesResponse(categories=categories, total_questions_all=total_all)
 
 
 @router.post("/sessions/{session_id}/submit", response_model=PracticeSubmitResponse)
@@ -213,10 +230,7 @@ def submit_answer(session_id: int, payload: PracticeSubmitRequest, db: Session =
 
     _update_mastery_by_formula(q, grading["score"])
 
-    session_scores = db.scalars(select(PracticeRecord.ai_score).where(PracticeRecord.session_id == session_id)).all()
-    if len(session_scores) >= 10:
-        session.total_score = int(sum(session_scores))
-        session.completed_at = datetime.utcnow()
+    _finalize_session_if_done(db, session)
 
     db.commit()
     db.refresh(record)
@@ -278,10 +292,7 @@ def skip_answer(session_id: int, payload: PracticeSkipRequest, db: Session = Dep
 
     _update_mastery_by_formula(q, 0)
 
-    session_scores = db.scalars(select(PracticeRecord.ai_score).where(PracticeRecord.session_id == session_id)).all()
-    if len(session_scores) >= 10:
-        session.total_score = int(sum(session_scores))
-        session.completed_at = datetime.utcnow()
+    _finalize_session_if_done(db, session)
 
     db.commit()
     db.refresh(record)
@@ -295,7 +306,7 @@ def practice_session_summary(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Practice session not found")
     records = db.scalars(select(PracticeRecord).where(PracticeRecord.session_id == session_id)).all()
     total_score = int(sum(r.ai_score for r in records))
-    if len(records) >= 10 and session.completed_at is None:
+    if len(records) >= session.question_count and session.completed_at is None:
         session.total_score = total_score
         session.completed_at = datetime.utcnow()
         db.commit()
@@ -304,6 +315,7 @@ def practice_session_summary(session_id: int, db: Session = Depends(get_db)):
         "total_score": total_score,
         "record_ids": [r.id for r in records],
         "completed_at": session.completed_at,
+        "question_count": session.question_count,
     }
 
 
@@ -325,6 +337,7 @@ def list_session_records(session_id: int, db: Session = Depends(get_db)):
         "session_id": session_id,
         "total_score": session.total_score,
         "completed_at": session.completed_at,
+        "question_count": session.question_count,
         "records": records,
     }
 

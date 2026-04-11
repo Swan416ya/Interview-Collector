@@ -146,15 +146,19 @@ When any API is added/removed/changed, update this file in the same commit.
 - Method: `GET`
 - Path: `/api/practice/categories`
 - Description:
-  - return each category with question count
-  - `selectable=true` only when question count is at least 10
+  - returns `{ "categories": [...], "total_questions_all": N }`
+  - each category: `total_questions`, `selectable` (true when count ≥ 5, i.e. enough for smallest session)
+  - `total_questions_all`: all questions across categories (for “全部分类随机”题量校验)
 - Response example:
 
 ```json
-[
-  { "category": "计算机网络", "total_questions": 23, "selectable": true },
-  { "category": "操作系统", "total_questions": 8, "selectable": false }
-]
+{
+  "categories": [
+    { "category": "计算机网络", "total_questions": 23, "selectable": true },
+    { "category": "操作系统", "total_questions": 4, "selectable": false }
+  ],
+  "total_questions_all": 120
+}
 ```
 
 ### Start Practice Session
@@ -162,10 +166,13 @@ When any API is added/removed/changed, update this file in the same commit.
 - Method: `POST`
 - Path: `/api/practice/sessions/start`
 - Query (optional):
-  - `category`: start a 10-question session from this category
+  - `category`: limit pool to this category; omit for all categories
+  - `count`: **5, 10, or 15** (default `10`)
 - Description:
-  - random pick 10 questions
-  - if category is set and count < 10, return 400
+  - random pick `count` questions
+  - persists `practice_sessions.question_count` for completion logic (session completes when that many records exist)
+  - if pool has fewer than `count` questions, return 400 with clear message
+- Response includes `question_count` (same as `count`)
 
 ### Start Custom Practice Session
 
@@ -175,13 +182,14 @@ When any API is added/removed/changed, update this file in the same commit.
 
 ```json
 {
-  "question_ids": [11, 29, 7, 54, 82, 15, 33, 60, 41, 22]
+  "question_ids": [11, 29, 7, 54, 82]
 }
 ```
 
 - Description:
-  - start session with exactly 10 specified question ids
-  - used by memorize mode ("背题 10 题后乱序测验")
+  - `question_ids` length must be **5, 10, or 15** (unique ids)
+  - `question_count` on the session is set to that length
+  - used by memorize mode after “背题”：前端按所选 5/10/15 题传入对应数量的 `question_ids`
 
 ### Submit Practice Answer
 
@@ -235,18 +243,19 @@ When any API is added/removed/changed, update this file in the same commit.
 
 - Method: `GET`
 - Path: `/api/practice/sessions/{session_id}/summary`
+- Response includes `question_count`; max score = `question_count * 10`
 
 ### Practice Session List
 
 - Method: `GET`
 - Path: `/api/practice/sessions`
-- Description: list completed sessions only
+- Description: list completed sessions only; each item includes `question_count`
 
 ### Practice Session Records
 
 - Method: `GET`
 - Path: `/api/practice/sessions/{session_id}/records`
-- Description: return full records for one session
+- Description: return full records for one session; includes `question_count`
 
 ### Categories CRUD
 

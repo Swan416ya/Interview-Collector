@@ -1,23 +1,41 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.question import PracticeRecordOut, QuestionOut
+
+ALLOWED_SESSION_SIZES = frozenset({5, 10, 15})
 
 
 class PracticeSessionStartResponse(BaseModel):
     session_id: int
     questions: list[QuestionOut]
+    question_count: int
 
 
 class PracticeSessionCustomStartRequest(BaseModel):
-    question_ids: list[int] = Field(min_length=10, max_length=10)
+    question_ids: list[int]
+
+    @field_validator("question_ids")
+    @classmethod
+    def length_and_unique(cls, v: list[int]) -> list[int]:
+        n = len(v)
+        if n not in ALLOWED_SESSION_SIZES:
+            raise ValueError("question_ids length must be 5, 10, or 15")
+        if len(set(v)) != n:
+            raise ValueError("question_ids must be unique")
+        return v
 
 
 class PracticeCategoryOption(BaseModel):
     category: str
     total_questions: int
     selectable: bool
+
+
+class PracticeCategoriesResponse(BaseModel):
+    categories: list[PracticeCategoryOption]
+    total_questions_all: int
 
 
 class PracticeSubmitRequest(BaseModel):
@@ -40,6 +58,7 @@ class PracticeSessionSummaryResponse(BaseModel):
     total_score: int
     record_ids: list[int]
     completed_at: datetime | None
+    question_count: int
 
 
 class PracticeSessionOut(BaseModel):
@@ -47,6 +66,7 @@ class PracticeSessionOut(BaseModel):
 
     id: int
     total_score: int
+    question_count: int
     completed_at: datetime | None
     created_at: datetime
 

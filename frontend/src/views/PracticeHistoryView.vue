@@ -12,6 +12,7 @@ const sessions = ref<PracticeSessionListItem[]>([]);
 const selectedSessionId = ref<number | null>(null);
 const selectedRecords = ref<PracticeRecord[]>([]);
 const selectedTotal = ref(0);
+const selectedQuestionCount = ref(10);
 const selectedCompletedAt = ref("");
 const loading = ref(false);
 const error = ref("");
@@ -35,6 +36,7 @@ async function openSession(sessionId: number) {
     const data = await fetchPracticeSessionRecords(sessionId);
     selectedRecords.value = data.records;
     selectedTotal.value = data.total_score;
+    selectedQuestionCount.value = data.question_count ?? 10;
     selectedCompletedAt.value = sessions.value.find((s) => s.id === sessionId)?.completed_at ?? "";
     detailVisible.value = true;
   } catch (e) {
@@ -60,7 +62,9 @@ onMounted(loadSessions);
         style="display: flex; justify-content: space-between; align-items: center; gap: 12px;"
       >
         <div>
-          <div style="font-weight: 700;">总分：{{ s.total_score }}/100</div>
+          <div style="font-weight: 700;">
+            总分：{{ s.total_score }}/{{ (s.question_count ?? 10) * 10 }}
+          </div>
           <div style="font-size: 12px; color: #667085; margin-top: 4px;">时间：{{ s.completed_at }}</div>
         </div>
         <button @click="openSession(s.id)">查看详情</button>
@@ -75,7 +79,7 @@ onMounted(loadSessions);
         <div class="swift-card" style="width: 920px; max-width: 95vw; max-height: 88vh; overflow: auto;">
           <h3 style="margin-top: 0;">刷题详情</h3>
           <p><strong>会话：</strong>#{{ selectedSessionId }}</p>
-          <p><strong>总分：</strong>{{ selectedTotal }}/100</p>
+          <p><strong>总分：</strong>{{ selectedTotal }}/{{ selectedQuestionCount * 10 }}</p>
           <p><strong>时间：</strong>{{ selectedCompletedAt }}</p>
           <div style="max-height: 54vh; overflow: auto; display: grid; gap: 8px;">
             <div v-for="r in selectedRecords" :key="r.id" style="border: 1px solid #dce3ef; padding: 10px; border-radius: 10px;">

@@ -4,12 +4,18 @@ import type { Question } from "./questions";
 export interface PracticeStartResponse {
   session_id: number;
   questions: Question[];
+  question_count: number;
 }
 
 export interface PracticeCategoryOption {
   category: string;
   total_questions: number;
   selectable: boolean;
+}
+
+export interface PracticeCategoriesResponse {
+  categories: PracticeCategoryOption[];
+  total_questions_all: number;
 }
 
 export interface PracticeRecord {
@@ -33,11 +39,13 @@ export interface PracticeSummaryResponse {
   total_score: number;
   record_ids: number[];
   completed_at: string | null;
+  question_count?: number;
 }
 
 export interface PracticeSessionListItem {
   id: number;
   total_score: number;
+  question_count?: number;
   completed_at: string | null;
   created_at: string;
 }
@@ -62,13 +70,19 @@ export interface PracticeSessionRecordsResponse {
   session_id: number;
   total_score: number;
   completed_at: string | null;
+  question_count?: number;
   records: PracticeRecord[];
 }
 
-export async function startPracticeSession(category?: string): Promise<PracticeStartResponse> {
-  const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start", null, {
-    params: category ? { category } : undefined
-  });
+export type PracticeSessionSize = 5 | 10 | 15;
+
+export async function startPracticeSession(
+  category: string | undefined,
+  count: PracticeSessionSize
+): Promise<PracticeStartResponse> {
+  const params: Record<string, string | number> = { count };
+  if (category) params.category = category;
+  const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start", null, { params });
   return data;
 }
 
@@ -137,8 +151,8 @@ export async function fetchPracticeSessionRecords(sessionId: number): Promise<Pr
   return data;
 }
 
-export async function fetchPracticeCategories(): Promise<PracticeCategoryOption[]> {
-  const { data } = await apiClient.get<PracticeCategoryOption[]>("/api/practice/categories");
+export async function fetchPracticeCategories(): Promise<PracticeCategoriesResponse> {
+  const { data } = await apiClient.get<PracticeCategoriesResponse>("/api/practice/categories");
   return data;
 }
 

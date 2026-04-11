@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import axios from "axios";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { fetchQuestions, type Question } from "../api/questions";
@@ -12,6 +12,7 @@ import {
   startPracticeSessionCustom,
   submitPracticeAnswer,
   type PracticeCategoryOption,
+  type PracticeSessionSize,
   type PracticeSummaryResponse
 } from "../api/practice";
 
@@ -19,7 +20,10 @@ type TrainMode = "practice" | "memorize";
 
 const mode = ref<TrainMode>("practice");
 const categoryOptions = ref<PracticeCategoryOption[]>([]);
+const totalQuestionsAll = ref(0);
 const selectedCategory = ref("");
+const sessionSize = ref<PracticeSessionSize>(10);
+const SESSION_SIZES: PracticeSessionSize[] = [5, 10, 15];
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -39,6 +43,27 @@ const memorizePrepared = ref(false);
 const currentQuestion = computed(() => questions.value[currentIndex.value] ?? null);
 const finished = computed(() => currentIndex.value >= questions.value.length && questions.value.length > 0);
 const currentMemorizeQuestion = computed(() => memorizeQuestions.value[memorizeIndex.value] ?? null);
+
+const canStartPractice = computed(() => {
+  const n = sessionSize.value;
+  if (!selectedCategory.value) return totalQuestionsAll.value >= n;
+  const opt = categoryOptions.value.find((c) => c.category === selectedCategory.value);
+  return (opt?.total_questions ?? 0) >= n;
+});
+
+/** 背题必须选具体分类，且该分类题量不少于本轮题量 */
+const canStartMemorize = computed(() => {
+  if (!selectedCategory.value) return false;
+  const opt = categoryOptions.value.find((c) => c.category === selectedCategory.value);
+  return (opt?.total_questions ?? 0) >= sessionSize.value;
+});
+
+const summaryMaxScore = computed(() => {
+  const qc = summary.value?.question_count;
+  if (qc != null && qc > 0) return qc * 10;
+  const len = questions.value.length;
+  return len > 0 ? len * 10 : 100;
+});
 
 function shuffle<T>(arr: T[]): T[] {
   const copied = [...arr];
@@ -61,19 +86,27 @@ function clearPracticeState() {
 }
 
 async function loadCategories() {
-  categoryOptions.value = await fetchPracticeCategories();
+  const data = await fetchPracticeCategories();
+  categoryOptions.value = data.categories;
+  totalQuestionsAll.value = data.total_questions_all;
   if (!selectedCategory.value) {
-    const firstSelectable = categoryOptions.value.find((x) => x.selectable);
-    selectedCategory.value = firstSelectable?.category ?? "";
+    const firstOk = data.categories.find((x) => x.total_questions >= sessionSize.value);
+    selectedCategory.value = firstOk?.category ?? "";
   }
 }
 
 async function startCategoryPractice() {
+  if (!canStartPractice.value) {
+    error.value = selectedCategory.value
+      ? `该分类题目不足 ${sessionSize.value} 道，请换分类或减小题量`
+      : `全库题目不足 ${sessionSize.value} 道，请减小题量或先导入题目`;
+    return;
+  }
   loading.value = true;
   error.value = "";
   clearPracticeState();
   try {
-    const data = await startPracticeSession(selectedCategory.value || undefined);
+    const data = await startPracticeSession(selectedCategory.value || undefined, sessionSize.value);
     sessionId.value = data.session_id;
     questions.value = data.questions;
   } catch (e) {
@@ -89,6 +122,11 @@ async function prepareMemorize() {
     error.value = "请先选择分类";
     return;
   }
+  if (!canStartMemorize.value) {
+    error.value = `该分类题目不足 ${sessionSize.value} 道，请换分类或减小题量`;
+    return;
+  }
+  const n = sessionSize.value;
   loading.value = true;
   error.value = "";
   clearPracticeState();
@@ -96,12 +134,12 @@ async function prepareMemorize() {
   memorizeIndex.value = 0;
   try {
     const pool = await fetchQuestions({ category: selectedCategory.value });
-    if (pool.length < 10) {
-      error.value = "该分类不足 10 题，无法进入背题模式";
+    if (pool.length < n) {
+      error.value = `该分类不足 ${n} 题，无法进入背题模式`;
       memorizeQuestions.value = [];
       return;
     }
-    memorizeQuestions.value = shuffle(pool).slice(0, 10);
+    memorizeQuestions.value = shuffle(pool).slice(0, n);
     memorizePrepared.value = true;
   } catch (e) {
     if (axios.isAxiosError(e)) error.value = JSON.stringify(e.response?.data?.detail ?? e.message);
@@ -117,7 +155,8 @@ function nextMemorize() {
 }
 
 async function startQuizFromMemorize() {
-  if (memorizeQuestions.value.length !== 10) return;
+  const n = sessionSize.value;
+  if (memorizeQuestions.value.length !== n) return;
   loading.value = true;
   error.value = "";
   clearPracticeState();
@@ -186,12 +225,34 @@ async function nextQuestion() {
   }
 }
 
+watch(sessionSize, () => {
+  memorizePrepared.value = false;
+  memorizeQuestions.value = [];
+  memorizeIndex.value = 0;
+  if (!selectedCategory.value) return;
+  const opt = categoryOptions.value.find((c) => c.category === selectedCategory.value);
+  if (opt && opt.total_questions < sessionSize.value) {
+    const next = categoryOptions.value.find((c) => c.total_questions >= sessionSize.value);
+    selectedCategory.value = next?.category ?? "";
+  }
+});
+
+watch(mode, (m) => {
+  if (m !== "memorize") return;
+  memorizePrepared.value = false;
+  memorizeQuestions.value = [];
+  memorizeIndex.value = 0;
+  if (selectedCategory.value) return;
+  const ok = categoryOptions.value.find((c) => c.total_questions >= sessionSize.value);
+  selectedCategory.value = ok?.category ?? "";
+});
+
 onMounted(loadCategories);
 </script>
 
 <template>
   <section>
-    <h2>训练中心（每次 10 题）</h2>
+    <h2>训练中心</h2>
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>
 
     <div class="swift-card" style="display: grid; gap: 10px;">
@@ -199,20 +260,35 @@ onMounted(loadCategories);
         <button :disabled="mode === 'practice'" @click="mode = 'practice'">刷题模式</button>
         <button :disabled="mode === 'memorize'" @click="mode = 'memorize'">背题模式</button>
       </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+        <span style="font-size: 14px; color: #444;">本轮题量：</span>
+        <label v-for="n in SESSION_SIZES" :key="n" style="display: inline-flex; gap: 4px; align-items: center; cursor: pointer;">
+          <input v-model.number="sessionSize" type="radio" name="sessionSize" :value="n" />
+          {{ n }} 题
+        </label>
+      </div>
       <div style="display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;">
         <select v-model="selectedCategory">
-          <option value="">全部分类随机</option>
+          <option v-if="mode === 'practice'" value="">全部分类随机</option>
           <option
             v-for="item in categoryOptions"
             :key="item.category"
             :value="item.category"
-            :disabled="!item.selectable"
+            :disabled="item.total_questions < sessionSize"
           >
-            {{ item.category }}（{{ item.total_questions }}题）{{ item.selectable ? "" : " - 不足10题" }}
+            {{ item.category }}（{{ item.total_questions }}题）{{
+              item.total_questions < sessionSize ? ` — 不足${sessionSize}题` : ""
+            }}
           </option>
         </select>
         <button @click="loadCategories">刷新分类</button>
       </div>
+      <p v-if="mode === 'practice'" style="margin: 0; font-size: 13px; color: #667085;">
+        全库共 {{ totalQuestionsAll }} 题；选「全部分类」时需全库 ≥ 所选题量，选具体分类时需该分类 ≥ 所选题量。
+      </p>
+      <p v-if="mode === 'memorize'" style="margin: 0; font-size: 13px; color: #667085;">
+        背题需选择<strong>具体分类</strong>（不能用「全部分类」），且该分类题量 ≥ {{ sessionSize }}。
+      </p>
     </div>
 
     <div
@@ -220,7 +296,7 @@ onMounted(loadCategories);
       class="swift-card"
       style="min-height: 44vh; display: grid; place-items: center; margin-top: 12px;"
     >
-      <button @click="startCategoryPractice">开始刷题</button>
+      <button @click="startCategoryPractice" :disabled="!canStartPractice">开始刷题（{{ sessionSize }} 题）</button>
     </div>
 
     <div
@@ -228,7 +304,9 @@ onMounted(loadCategories);
       class="swift-card"
       style="min-height: 44vh; display: grid; place-items: center; margin-top: 12px;"
     >
-      <button @click="prepareMemorize">开始背题（10题）</button>
+      <button @click="prepareMemorize" :disabled="!canStartMemorize">
+        开始背题（{{ sessionSize }} 题）
+      </button>
     </div>
 
     <div v-if="loading" class="swift-card" style="min-height: 200px; display: grid; place-items: center; margin-top: 12px;">
@@ -236,7 +314,7 @@ onMounted(loadCategories);
     </div>
 
     <div v-if="mode === 'memorize' && memorizePrepared && memorizeIndex < memorizeQuestions.length" class="swift-card" style="margin-top: 12px;">
-      <p>背题进度：第 {{ memorizeIndex + 1 }} / 10 题</p>
+      <p>背题进度：第 {{ memorizeIndex + 1 }} / {{ memorizeQuestions.length }} 题</p>
       <h3>{{ currentMemorizeQuestion?.stem }}</h3>
       <div>
         <strong>参考答案：</strong>
@@ -249,9 +327,13 @@ onMounted(loadCategories);
       <button @click="nextMemorize">下一题</button>
     </div>
 
-    <div v-if="mode === 'memorize' && memorizePrepared && memorizeIndex >= 10" class="swift-card" style="margin-top: 12px;">
+    <div
+      v-if="mode === 'memorize' && memorizePrepared && memorizeIndex >= memorizeQuestions.length && memorizeQuestions.length > 0"
+      class="swift-card"
+      style="margin-top: 12px;"
+    >
       <h3>背题完成</h3>
-      <p>将进入刷题模式，对刚才这 10 题进行乱序测验。</p>
+      <p>将进入刷题模式，对刚才这 {{ memorizeQuestions.length }} 题进行乱序测验。</p>
       <button @click="startQuizFromMemorize">开始测验</button>
     </div>
 
@@ -290,7 +372,7 @@ onMounted(loadCategories);
 
     <div v-if="finished && summary" class="swift-card" style="margin-top: 12px;">
       <h3>本轮完成</h3>
-      <p><strong>总分：</strong>{{ summary.total_score }} / 100</p>
+      <p><strong>总分：</strong>{{ summary.total_score }} / {{ summaryMaxScore }}</p>
       <p><strong>记录ID：</strong>{{ summary.record_ids.join(", ") }}</p>
       <p><strong>会话ID：</strong>{{ summary.session_id }}</p>
     </div>

@@ -10,7 +10,7 @@ const store = useQuestionStore();
 const filters = reactive({
   category: "",
   difficulty: "",
-  sortMode: "created_desc"
+  sortMode: "recent_desc"
 });
 const pager = reactive({
   page: 1,
@@ -64,7 +64,7 @@ async function runFilter() {
 async function resetFilter() {
   filters.category = "";
   filters.difficulty = "";
-  filters.sortMode = "created_desc";
+  filters.sortMode = "recent_desc";
   pager.page = 1;
   await runFilter();
 }
@@ -163,12 +163,12 @@ onMounted(async () => {
           <option value="5">难度 5</option>
         </select>
         <select v-model="filters.sortMode" @change="changePage(1)">
-          <option value="created_desc">时间：新到旧</option>
-          <option value="created_asc">时间：旧到新</option>
+          <option value="recent_desc">最近遇到：近到远（默认）</option>
+          <option value="recent_asc">最近遇到：远到近</option>
+          <option value="created_desc">入库时间：新到旧</option>
+          <option value="created_asc">入库时间：旧到新</option>
           <option value="mastery_desc">掌握度：高到低</option>
           <option value="mastery_asc">掌握度：低到高</option>
-          <option value="recent_desc">最近遇到：近到远</option>
-          <option value="recent_asc">最近遇到：远到近</option>
         </select>
       </div>
       <div style="display: flex; gap: 8px;">

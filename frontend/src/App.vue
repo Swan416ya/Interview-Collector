@@ -14,7 +14,7 @@ const navItems = [
   { to: "/", title: "用户主页", desc: "个人信息、活跃图、每日一题", icon: House },
   { to: "/questions", title: "题库", desc: "筛选、排序、做题记录", icon: BookOpen },
   { to: "/import", title: "导入", desc: "AI 提取并入库面经题目", icon: UploadCloud },
-  { to: "/practice", title: "训练", desc: "10题一轮，AI即时判题", icon: Brain },
+  { to: "/practice", title: "训练", desc: "刷题/背题均支持 5/10/15 题", icon: Brain },
   { to: "/practice-history", title: "刷题记录", desc: "查看每轮会话与得分", icon: History },
   { to: "/categories", title: "分类/岗位", desc: "统一维护分类与岗位", icon: FolderKanban }
 ];
