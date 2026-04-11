@@ -31,6 +31,20 @@ export interface ImportCommitResponse {
   role_lists_adjusted?: number;
 }
 
+export type ImportRowStatus = "idle" | "loading" | "ok" | "err";
+
+export interface ImportCommitOneResponse {
+  id: number;
+  stem: string;
+  category: string;
+  difficulty: number;
+  category_fallback: boolean;
+  roles_adjusted: boolean;
+  linked_roles: number;
+  linked_companies: number;
+  created_companies: number;
+}
+
 export async function fetchPromptTemplate(): Promise<PromptTemplateResponse> {
   const { data } = await apiClient.get<PromptTemplateResponse>("/api/import/prompt-template");
   return data;
@@ -38,6 +52,21 @@ export async function fetchPromptTemplate(): Promise<PromptTemplateResponse> {
 
 export async function commitImport(payload: unknown): Promise<ImportCommitResponse> {
   const { data } = await apiClient.post<ImportCommitResponse>("/api/import/commit", payload);
+  return data;
+}
+
+export async function commitImportOne(item: PreviewQuestionItem): Promise<ImportCommitOneResponse> {
+  const { data } = await apiClient.post<ImportCommitOneResponse>(
+    "/api/import/commit-one",
+    {
+      stem: item.stem,
+      category_name: item.category_name,
+      roles: item.roles ?? [],
+      companies: item.companies ?? [],
+      difficulty: item.difficulty
+    },
+    { timeout: 120000 }
+  );
   return data;
 }
 

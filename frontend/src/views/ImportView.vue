@@ -4,21 +4,24 @@ import { ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import {
-  commitImport,
+  commitImportOne,
   previewImport,
-  type ImportCommitResponse,
+  type ImportRowStatus,
   type PreviewQuestionItem
 } from "../api/importing";
 
 const rawText = ref("");
 const previewItems = ref<PreviewQuestionItem[]>([]);
 const selected = ref<boolean[]>([]);
-const result = ref<ImportCommitResponse | null>(null);
-const importedFlags = ref<boolean[]>([]);
+const rowStatus = ref<ImportRowStatus[]>([]);
+const savedQuestionId = ref<(number | null)[]>([]);
+const importSummary = ref<{ ok: number; err: number } | null>(null);
 const error = ref("");
 const errorDetail = ref("");
 const previewing = ref(false);
 const committing = ref(false);
+const currentImportIndex = ref(0);
+const currentImportTotal = ref(0);
 
 function formatError(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err)) {
@@ -40,6 +43,14 @@ function formatError(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function rowBoxClass(idx: number): string {
+  const st = rowStatus.value[idx] ?? "idle";
+  if (st === "ok") return "import-row import-row--ok";
+  if (st === "err") return "import-row import-row--err";
+  if (st === "loading") return "import-row import-row--loading";
+  return "import-row";
+}
+
 async function runPreview() {
   if (rawText.value.trim().length < 10) {
     error.value = "请输入更完整的面经原文";
@@ -49,12 +60,13 @@ async function runPreview() {
   previewing.value = true;
   error.value = "";
   errorDetail.value = "";
-  result.value = null;
+  importSummary.value = null;
   try {
     const data = await previewImport(rawText.value.trim());
     previewItems.value = data.questions;
     selected.value = data.questions.map(() => true);
-    importedFlags.value = data.questions.map(() => false);
+    rowStatus.value = data.questions.map(() => "idle" as ImportRowStatus);
+    savedQuestionId.value = data.questions.map(() => null);
   } catch (e) {
     error.value = formatError(e, "提取失败，请看下方详细错误");
   } finally {
@@ -63,28 +75,49 @@ async function runPreview() {
 }
 
 async function submitImport() {
-  const checkedQuestions = previewItems.value.filter((_, idx) => selected.value[idx]);
-  if (!checkedQuestions.length) {
-    error.value = "请至少勾选一题再导入";
+  const indices = previewItems.value
+    .map((_, i) => i)
+    .filter((i) => selected.value[i] && rowStatus.value[i] !== "ok");
+
+  if (!indices.length) {
+    const anyOk = rowStatus.value.some((s) => s === "ok");
+    error.value = anyOk
+      ? "所选题目均已入库，或请勾选尚未入库的题目"
+      : "请至少勾选一题再导入";
     errorDetail.value = "";
     return;
   }
+
   committing.value = true;
   error.value = "";
   errorDetail.value = "";
-  result.value = null;
+  importSummary.value = null;
+  currentImportTotal.value = indices.length;
+  let ok = 0;
+  let err = 0;
+
   try {
-    const importedIndexes = previewItems.value
-      .map((_, idx) => idx)
-      .filter((idx) => selected.value[idx]);
-    result.value = await commitImport({ questions: checkedQuestions });
-    importedIndexes.forEach((idx) => {
-      importedFlags.value[idx] = true;
-    });
-  } catch (e) {
-    error.value = formatError(e, "导入失败，请看下方详细错误");
+    for (let n = 0; n < indices.length; n += 1) {
+      const idx = indices[n];
+      currentImportIndex.value = n + 1;
+      rowStatus.value[idx] = "loading";
+      try {
+        const res = await commitImportOne(previewItems.value[idx]);
+        rowStatus.value[idx] = "ok";
+        savedQuestionId.value[idx] = res.id;
+        ok += 1;
+      } catch (e) {
+        rowStatus.value[idx] = "err";
+        err += 1;
+        formatError(e, `第 ${idx + 1} 题入库失败`);
+        error.value = `部分题目失败（已成功 ${ok}，失败 ${err}），最后一条错误见下方`;
+      }
+    }
+    importSummary.value = { ok, err };
   } finally {
     committing.value = false;
+    currentImportIndex.value = 0;
+    currentImportTotal.value = 0;
   }
 }
 
@@ -96,7 +129,10 @@ function toggleAll(checked: boolean) {
 <template>
   <section>
     <h2>AI 导入</h2>
-    <p>流程：粘贴面经原文 -> 后端调用豆包提取 -> 勾选题目（默认全选）-> 导入。</p>
+    <p>
+      流程：粘贴面经原文 → 解析预览 → 勾选题目 →
+      <strong>按题逐个</strong>生成参考答案并入库；每成功一题该卡片会标绿，避免某一题 AI 失败导致前面白跑。
+    </p>
 
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>
     <pre
@@ -121,20 +157,15 @@ function toggleAll(checked: boolean) {
     <h3 style="margin-top: 16px;">提取结果（默认全选）</h3>
     <p v-if="!previewItems.length">暂无提取结果，请先点击“AI 提取预览”。</p>
     <div v-else style="display: grid; gap: 10px;">
-      <label
-        v-for="(item, idx) in previewItems"
-        :key="idx"
-        :style="{
-          display: 'block',
-          border: '1px solid #ddd',
-          padding: '10px',
-          borderRadius: '6px',
-          background: importedFlags[idx] ? '#dff5df' : '#ffffff'
-        }"
-      >
-        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
-          <input v-model="selected[idx]" type="checkbox" />
+      <label v-for="(item, idx) in previewItems" :key="idx" :class="rowBoxClass(idx)">
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+          <input v-model="selected[idx]" type="checkbox" :disabled="rowStatus[idx] === 'loading'" />
           <strong>题目 {{ idx + 1 }}</strong>
+          <span v-if="rowStatus[idx] === 'ok'" class="import-badge import-badge--ok">
+            已入库 #{{ savedQuestionId[idx] }}
+          </span>
+          <span v-else-if="rowStatus[idx] === 'loading'" class="import-badge import-badge--loading">入库中…</span>
+          <span v-else-if="rowStatus[idx] === 'err'" class="import-badge import-badge--err">失败（可重试）</span>
         </div>
         <div>
           <strong>题干：</strong>
@@ -148,26 +179,72 @@ function toggleAll(checked: boolean) {
       </label>
     </div>
 
-    <div v-if="result" style="margin-top: 12px; margin-bottom: 68px;">
-      <h3>导入结果</h3>
-      <p
-        v-if="(result.category_fallbacks ?? 0) > 0 || (result.role_lists_adjusted ?? 0) > 0"
-        style="color: #856404; background: #fff8e6; border: 1px solid #ffe8a3; padding: 8px 10px; border-radius: 8px; font-size: 13px;"
-      >
-        部分题目与本地分类/岗位不完全一致，已自动调整：
-        分类回退 {{ result.category_fallbacks ?? 0 }} 道，岗位列表裁剪 {{ result.role_lists_adjusted ?? 0 }} 道（详见后端日志）。
+    <div v-if="importSummary" style="margin-top: 12px; margin-bottom: 68px;">
+      <h3>本轮导入汇总</h3>
+      <p style="font-size: 14px;">
+        成功 <strong style="color: #1a7f37;">{{ importSummary.ok }}</strong> 道，
+        失败 <strong style="color: #cf222e;">{{ importSummary.err }}</strong> 道。
       </p>
-      <pre>{{ JSON.stringify(result, null, 2) }}</pre>
     </div>
 
     <div
       style="position: sticky; bottom: 0; z-index: 20; margin-top: 12px; padding: 10px; border-radius: 12px; border: 1px solid #e3e8f2; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);"
     >
       <button @click="submitImport" :disabled="committing || !previewItems.length">
-        {{ committing ? "导入中..." : "导入勾选题目" }}
+        {{ committing ? "正在逐题导入…" : "逐个导入勾选题目（未入库）" }}
       </button>
-      <LoadingIndicator v-if="committing" text="AI 结果正在入库..." />
+      <LoadingIndicator
+        v-if="committing && currentImportTotal > 0"
+        :text="`正在导入第 ${currentImportIndex} / ${currentImportTotal} 题…`"
+      />
     </div>
   </section>
 </template>
 
+<style scoped>
+.import-row {
+  display: block;
+  border: 2px solid #d0d7de;
+  padding: 10px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.import-row--ok {
+  border-color: #2ea043;
+  background: #dcffe4;
+  box-shadow: 0 0 0 1px rgba(46, 160, 67, 0.2);
+}
+
+.import-row--err {
+  border-color: #cf222e;
+  background: #fff5f5;
+}
+
+.import-row--loading {
+  border-color: #0969da;
+  background: #f6f8fa;
+}
+
+.import-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.import-badge--ok {
+  background: #2ea043;
+  color: #fff;
+}
+
+.import-badge--loading {
+  background: #0969da;
+  color: #fff;
+}
+
+.import-badge--err {
+  background: #cf222e;
+  color: #fff;
+}
+</style>

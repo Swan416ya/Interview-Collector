@@ -16,3 +16,15 @@ class ImportPayload(BaseModel):
 class ImportPreviewRequest(BaseModel):
     raw_text: str = Field(min_length=10)
 
+
+class ImportCommitOneResponse(BaseModel):
+    id: int
+    stem: str
+    category: str
+    difficulty: int
+    category_fallback: bool
+    roles_adjusted: bool
+    linked_roles: int
+    linked_companies: int
+    created_companies: int
+

@@ -270,7 +270,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - returns dynamic prompt with local category/role whitelist
   - enforces full company name output
 
-### Import Commit
+### Import Commit (batch)
 
 - Method: `POST`
 - Path: `/api/import/commit`
@@ -279,9 +279,21 @@ When any API is added/removed/changed, update this file in the same commit.
   - **roles**：仅保留本地岗位表中存在的名称；可退化为空列表；不会因此返回 400
   - companies: link if exists, create if not
   - each imported question auto-generates `reference_answer` via AI
+  - 同一事务内处理全部题目；任一题失败则整批回滚
 - Response extra fields:
   - `category_fallbacks`: 发生分类回退的题目数量
   - `role_lists_adjusted`: 岗位列表被裁剪过的题目数量
+
+### Import Commit One (single question)
+
+- Method: `POST`
+- Path: `/api/import/commit-one`
+- Request body: 与 `ImportQuestionItem` 相同（`stem`, `category_name`, `roles`, `companies`, `difficulty`）
+- Description:
+  - 仅处理一道题：生成参考答案 → 写入 `questions` 与关联表 → **立即 `commit`**
+  - 分类/岗位规则与 `/api/import/commit` 相同
+  - 适合前端「逐题导入」，避免一题 AI/解析失败导致已生成题目全部丢失
+- Response: `ImportCommitOneResponse`（`id`, `stem`, `category`, `difficulty`, `category_fallback`, `roles_adjusted`, `linked_roles`, `linked_companies`, `created_companies`）
 
 ### Backfill Missing Reference Answers
 

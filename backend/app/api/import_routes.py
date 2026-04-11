@@ -8,7 +8,12 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.question import Question
 from app.models.taxonomy import Category, Company, QuestionCompany, QuestionRole, Role
-from app.schemas.importing import ImportPayload, ImportPreviewRequest, ImportQuestionItem
+from app.schemas.importing import (
+    ImportCommitOneResponse,
+    ImportPayload,
+    ImportPreviewRequest,
+    ImportQuestionItem,
+)
 from app.services.ai_service import call_doubao_extract, call_doubao_reference_answer
 
 router = APIRouter(prefix="/api/import", tags=["import"])
@@ -53,6 +58,70 @@ def _normalize_for_commit(
             item.stem,
         )
     return cat, valid_roles
+
+
+def _load_taxonomy(db: Session) -> tuple[set[str], dict[str, Role]]:
+    category_names = set(db.scalars(select(Category.name)).all())
+    role_rows = db.scalars(select(Role)).all()
+    role_by_name = {r.name: r for r in role_rows}
+    return category_names, role_by_name
+
+
+def _insert_single_import_question(
+    db: Session,
+    item: ImportQuestionItem,
+    category_names: set[str],
+    role_by_name: dict[str, Role],
+) -> tuple[Question, dict]:
+    """
+    Create one question (with AI reference answer), relations; flush within current transaction.
+    Caller must commit or rollback.
+    """
+    raw_cat = (item.category_name or "").strip()
+    raw_roles = list(item.roles or [])
+    cat, role_names = _normalize_for_commit(item, category_names, role_by_name)
+    category_fallback = raw_cat not in category_names
+    roles_adjusted = set(role_names) != set(raw_roles)
+
+    q = Question(
+        stem=item.stem.strip(),
+        category=cat,
+        difficulty=item.difficulty,
+        reference_answer=call_doubao_reference_answer(item.stem.strip()),
+    )
+    db.add(q)
+    db.flush()
+
+    linked_roles = 0
+    for role_name in set(role_names):
+        rel = QuestionRole(question_id=q.id, role_id=role_by_name[role_name].id)
+        db.add(rel)
+        linked_roles += 1
+
+    created_companies = 0
+    linked_companies = 0
+    for company_name_raw in set(item.companies):
+        company_name = company_name_raw.strip()
+        if not company_name:
+            continue
+        company = db.scalar(select(Company).where(Company.name == company_name))
+        if not company:
+            company = Company(name=company_name)
+            db.add(company)
+            db.flush()
+            created_companies += 1
+        rel = QuestionCompany(question_id=q.id, company_id=company.id)
+        db.add(rel)
+        linked_companies += 1
+
+    stats = {
+        "category_fallback": category_fallback,
+        "roles_adjusted": roles_adjusted,
+        "linked_roles": linked_roles,
+        "linked_companies": linked_companies,
+        "created_companies": created_companies,
+    }
+    return q, stats
 
 
 def _build_extract_prompt(categories: list[str], roles: list[str]) -> str:
@@ -214,11 +283,35 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
     return resp
 
 
+@router.post("/commit-one", response_model=ImportCommitOneResponse)
+def import_commit_one(payload: ImportQuestionItem, db: Session = Depends(get_db)):
+    """Generate reference answer and persist one question; safe if batch import fails mid-way elsewhere."""
+    category_names, role_by_name = _load_taxonomy(db)
+    if not category_names or not role_by_name:
+        raise HTTPException(status_code=400, detail="Please create categories and roles first")
+    try:
+        q, stats = _insert_single_import_question(db, payload, category_names, role_by_name)
+        db.commit()
+        db.refresh(q)
+    except Exception:
+        db.rollback()
+        raise
+    return ImportCommitOneResponse(
+        id=q.id,
+        stem=q.stem,
+        category=q.category,
+        difficulty=q.difficulty,
+        category_fallback=stats["category_fallback"],
+        roles_adjusted=stats["roles_adjusted"],
+        linked_roles=stats["linked_roles"],
+        linked_companies=stats["linked_companies"],
+        created_companies=stats["created_companies"],
+    )
+
+
 @router.post("/commit")
 def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
-    category_names = set(db.scalars(select(Category.name)).all())
-    role_rows = db.scalars(select(Role)).all()
-    role_by_name = {r.name: r for r in role_rows}
+    category_names, role_by_name = _load_taxonomy(db)
 
     if not category_names or not role_by_name:
         raise HTTPException(status_code=400, detail="Please create categories and roles first")
@@ -230,45 +323,22 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
     category_fallbacks = 0
     role_lists_adjusted = 0
 
-    for item in payload.questions:
-        raw_cat = (item.category_name or "").strip()
-        raw_roles = list(item.roles or [])
-        cat, role_names = _normalize_for_commit(item, category_names, role_by_name)
-        if raw_cat not in category_names:
-            category_fallbacks += 1
-        if set(role_names) != set(raw_roles):
-            role_lists_adjusted += 1
+    try:
+        for item in payload.questions:
+            _, stats = _insert_single_import_question(db, item, category_names, role_by_name)
+            created_questions += 1
+            if stats["category_fallback"]:
+                category_fallbacks += 1
+            if stats["roles_adjusted"]:
+                role_lists_adjusted += 1
+            created_companies += stats["created_companies"]
+            linked_roles += stats["linked_roles"]
+            linked_companies += stats["linked_companies"]
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
-        q = Question(
-            stem=item.stem.strip(),
-            category=cat,
-            difficulty=item.difficulty,
-            reference_answer=call_doubao_reference_answer(item.stem.strip()),
-        )
-        db.add(q)
-        db.flush()
-        created_questions += 1
-
-        for role_name in set(role_names):
-            rel = QuestionRole(question_id=q.id, role_id=role_by_name[role_name].id)
-            db.add(rel)
-            linked_roles += 1
-
-        for company_name_raw in set(item.companies):
-            company_name = company_name_raw.strip()
-            if not company_name:
-                continue
-            company = db.scalar(select(Company).where(Company.name == company_name))
-            if not company:
-                company = Company(name=company_name)
-                db.add(company)
-                db.flush()
-                created_companies += 1
-            rel = QuestionCompany(question_id=q.id, company_id=company.id)
-            db.add(rel)
-            linked_companies += 1
-
-    db.commit()
     return {
         "created_questions": created_questions,
         "created_companies": created_companies,
