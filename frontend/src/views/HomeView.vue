@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
+import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { fetchPracticeSessions, submitDailyPracticeAnswer } from "../api/practice";
 import { fetchQuestionRecords, fetchQuestions, type Question } from "../api/questions";
 import { mockUserProfile } from "../mock/userProfile";
@@ -197,8 +198,16 @@ async function submitDailyAnswer() {
           <LoadingIndicator v-if="dailySubmitting" text="AI 正在判题..." />
           <div v-if="dailyResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
             <p><strong>得分：</strong>{{ dailyResult.score }} / 10</p>
-            <p><strong>解析：</strong>{{ dailyResult.analysis }}</p>
-            <p><strong>参考答案：</strong>{{ dailyResult.reference || "-" }}</p>
+            <div>
+              <strong>解析：</strong>
+              <MarkdownRenderer v-if="dailyResult.analysis?.trim()" :source="dailyResult.analysis" />
+              <span v-else>-</span>
+            </div>
+            <div>
+              <strong>参考答案：</strong>
+              <MarkdownRenderer v-if="dailyResult.reference?.trim()" :source="dailyResult.reference" />
+              <span v-else>-</span>
+            </div>
           </div>
         </div>
       </div>

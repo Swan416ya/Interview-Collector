@@ -2,6 +2,7 @@
 import axios from "axios";
 import { computed, onMounted, reactive, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
+import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { fetchQuestions, type Question } from "../api/questions";
 import {
   fetchPracticeCategories,
@@ -237,7 +238,14 @@ onMounted(loadCategories);
     <div v-if="mode === 'memorize' && memorizePrepared && memorizeIndex < memorizeQuestions.length" class="swift-card" style="margin-top: 12px;">
       <p>背题进度：第 {{ memorizeIndex + 1 }} / 10 题</p>
       <h3>{{ currentMemorizeQuestion?.stem }}</h3>
-      <p><strong>参考答案：</strong>{{ currentMemorizeQuestion?.reference_answer || "暂无参考答案" }}</p>
+      <div>
+        <strong>参考答案：</strong>
+        <MarkdownRenderer
+          v-if="currentMemorizeQuestion?.reference_answer?.trim()"
+          :source="currentMemorizeQuestion.reference_answer"
+        />
+        <span v-else>暂无参考答案</span>
+      </div>
       <button @click="nextMemorize">下一题</button>
     </div>
 
@@ -261,8 +269,22 @@ onMounted(loadCategories);
 
       <div v-if="perQuestionResult[currentQuestion.id]" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
         <p><strong>得分：</strong>{{ perQuestionResult[currentQuestion.id].score }} / 10</p>
-        <p><strong>解析：</strong>{{ perQuestionResult[currentQuestion.id].analysis }}</p>
-        <p><strong>参考答案：</strong>{{ perQuestionResult[currentQuestion.id].reference || "-" }}</p>
+        <div>
+          <strong>解析：</strong>
+          <MarkdownRenderer
+            v-if="perQuestionResult[currentQuestion.id].analysis?.trim()"
+            :source="perQuestionResult[currentQuestion.id].analysis"
+          />
+          <span v-else>-</span>
+        </div>
+        <div>
+          <strong>参考答案：</strong>
+          <MarkdownRenderer
+            v-if="perQuestionResult[currentQuestion.id].reference?.trim()"
+            :source="perQuestionResult[currentQuestion.id].reference"
+          />
+          <span v-else>-</span>
+        </div>
       </div>
     </div>
 

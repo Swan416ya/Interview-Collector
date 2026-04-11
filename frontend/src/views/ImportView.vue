@@ -2,6 +2,7 @@
 import axios from "axios";
 import { ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
+import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import {
   commitImport,
   previewImport,
@@ -135,7 +136,11 @@ function toggleAll(checked: boolean) {
           <input v-model="selected[idx]" type="checkbox" />
           <strong>题目 {{ idx + 1 }}</strong>
         </div>
-        <div><strong>题干：</strong>{{ item.stem }}</div>
+        <div>
+          <strong>题干：</strong>
+          <MarkdownRenderer v-if="item.stem?.trim()" :source="item.stem" />
+          <span v-else>-</span>
+        </div>
         <div><strong>分类：</strong>{{ item.category_name }}</div>
         <div><strong>岗位：</strong>{{ item.roles?.join("、") || "-" }}</div>
         <div><strong>公司：</strong>{{ item.companies?.join("、") || "-" }}</div>

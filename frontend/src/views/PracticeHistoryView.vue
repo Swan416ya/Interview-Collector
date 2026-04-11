@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import {
   fetchPracticeSessionRecords,
   fetchPracticeSessions,
@@ -80,7 +81,11 @@ onMounted(loadSessions);
             <div v-for="r in selectedRecords" :key="r.id" style="border: 1px solid #dce3ef; padding: 10px; border-radius: 10px;">
               <div><strong>评分：</strong>{{ r.ai_score }}/10</div>
               <div><strong>用户答案：</strong>{{ r.user_answer || "-" }}</div>
-              <div><strong>AI解析：</strong>{{ r.ai_answer || "-" }}</div>
+              <div>
+                <strong>AI 解析：</strong>
+                <MarkdownRenderer v-if="r.ai_answer?.trim()" :source="r.ai_answer" />
+                <span v-else>-</span>
+              </div>
             </div>
           </div>
           <div style="margin-top: 10px;">

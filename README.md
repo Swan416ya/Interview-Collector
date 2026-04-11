@@ -14,6 +14,54 @@ Monorepo for interview question collection and training.
 - `frontend`: Vue3 + Vite app
 - `docs`: design docs
 
+## 本地启动（前后端）
+
+日常开发需要**两个终端**，分别跑后端和前端。下面假设你已完成本节下方 **Quick Start** 里的一次性配置（虚拟环境、依赖、`backend/.env`、数据库迁移等）。
+
+| 服务 | 工作目录 | 说明 |
+|------|-----------|------|
+| 后端 API | `backend` | FastAPI，默认 `8000` 端口 |
+| 前端 | `frontend` | Vite 开发服务器，默认多为 `5173` |
+
+### 终端 1：启动后端
+
+**PowerShell**（仓库根目录换为你本机路径）：
+
+```powershell
+cd "你的路径\Interview-Collector\backend"
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+**cmd.exe** 下激活虚拟环境请用：
+
+```bat
+cd /d "你的路径\Interview-Collector\backend"
+.\.venv\Scripts\activate.bat
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 终端 2：启动前端
+
+```bash
+cd frontend
+npm run dev
+```
+
+（若尚未安装依赖，先在 `frontend` 目录执行一次 `npm install`。）
+
+### 打开与验证
+
+- 前端：<http://localhost:5173>（具体端口以 Vite 终端输出为准）
+- 后端健康检查：<http://127.0.0.1:8000/health>
+- Swagger：<http://127.0.0.1:8000/docs>
+
+前端默认通过环境变量 `VITE_API_BASE_URL` 请求后端，未设置时等同于 `http://localhost:8000`，与上述后端端口一致即可。
+
+在对应终端按 `Ctrl+C` 停止该服务。请保证 MySQL（若使用）已启动，且 `backend/.env` 里 `DATABASE_URL` 等信息正确，否则后端无法正常工作。
+
+连接 **MySQL 8**（默认 `caching_sha2_password`）时，PyMySQL 需要 **`cryptography`**，已在 `backend/requirements.txt` 中声明；若仍报错，在 `backend` 目录执行 `pip install -r requirements.txt` 或 `pip install cryptography`。
+
 ## Quick Start
 
 ### Backend
@@ -34,7 +82,7 @@ copy .env.example .env
 CREATE DATABASE interviewCollector CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-1. 生成并执行迁移：
+2. 生成并执行迁移：
 
 ```bash
 cd backend
@@ -43,10 +91,10 @@ alembic revision --autogenerate -m "init tables"
 alembic upgrade head
 ```
 
-1. 启动后端：
+3. 启动后端（命令与本文「本地启动（前后端）」一节中终端 1 相同）：
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ### Frontend
@@ -59,18 +107,8 @@ npm run dev
 
 ### Verify
 
-Backend:
-
-```bash
-http://localhost:8000/health
-http://localhost:8000/docs
-```
-
-Frontend:
-
-```bash
-http://localhost:5173
-```
+- 后端：<http://127.0.0.1:8000/health>、<http://127.0.0.1:8000/docs>
+- 前端：<http://localhost:5173>（端口以 Vite 为准）
 
 ## Current Baseline
 
@@ -118,8 +156,8 @@ http://localhost:5173
 
 ### Option A: Local (current)
 
-- Backend: `uvicorn app.main:app --reload --port 8000`
-- Frontend: `npm run dev`
+- Backend: `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`（步骤见本文「本地启动（前后端）」）
+- Frontend: 在 `frontend` 目录 `npm run dev`
 - DB: Local MySQL `interviewCollector`
 
 ### Option B: Production (recommended)

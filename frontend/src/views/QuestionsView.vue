@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { fetchQuestionRecords, type PracticeRecord, type Question } from "../api/questions";
 import { fetchCategories } from "../api/taxonomy";
+import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { useQuestionStore } from "../stores/questionStore";
 
 const store = useQuestionStore();
@@ -225,7 +226,11 @@ onMounted(async () => {
         <div class="swift-card" style="width: 920px; max-width: 95vw; max-height: 88vh; overflow: auto; padding: 16px;">
           <h3 style="margin-top: 0;">题目详情与操作</h3>
           <p><strong>题目：</strong>{{ selectedQuestion.stem }}</p>
-          <p><strong>参考答案：</strong>{{ selectedQuestion.reference_answer || "暂无" }}</p>
+          <div>
+            <strong>参考答案：</strong>
+            <MarkdownRenderer v-if="selectedQuestion.reference_answer?.trim()" :source="selectedQuestion.reference_answer" />
+            <span v-else>暂无</span>
+          </div>
 
           <div style="display: flex; gap: 8px; margin: 10px 0;">
             <button @click="editing = true">编辑题目</button>
@@ -249,7 +254,11 @@ onMounted(async () => {
               <div v-for="r in records" :key="r.id" style="border: 1px solid #dde3ee; padding: 8px; border-radius: 10px;">
                 <div><strong>评分：</strong>{{ r.ai_score }}/10</div>
                 <div><strong>用户答案：</strong>{{ r.user_answer || "-" }}</div>
-                <div><strong>AI答案：</strong>{{ r.ai_answer || "-" }}</div>
+                <div>
+                  <strong>AI 解析：</strong>
+                  <MarkdownRenderer v-if="r.ai_answer?.trim()" :source="r.ai_answer" />
+                  <span v-else>-</span>
+                </div>
                 <div style="font-size: 12px; color: #666;">时间：{{ r.created_at }}</div>
               </div>
               <p v-if="records.length === 0" style="color: #666;">暂无做题记录</p>
