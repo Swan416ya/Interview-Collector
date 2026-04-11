@@ -118,9 +118,10 @@ When any API is added/removed/changed, update this file in the same commit.
 - Path: `/api/practice/activity`
 - Description:
   - returns a **dense** list of **371** calendar days (53 weeks × 7 days) for a GitHub-style heatmap
-  - dates use **`Asia/Shanghai`** (calendar date, not UTC)
+  - **`count` per cell** uses the **storage calendar date** of `created_at` — same as SQL `date(created_at)` (SQLite `date(created_at)`). This matches raw DB tools that filter `WHERE date(created_at) = '…'`. It does **not** reinterpret naive timestamps as UTC and then convert to Shanghai (which could shift rows across midnight and make totals disagree with DB date filters).
+  - **`timezone` field** in JSON is informational (`storage-date(created_at)`); **`today`** is still **Asia/Shanghai** wall date for greying out future cells in the grid.
   - window: from the Sunday of the week **52 weeks before** the Sunday of the current week, through **Saturday** of the current week (inclusive of all cells in the grid)
-  - **`count`**: number of `practice_records` rows whose `created_at` falls on that calendar day in Shanghai (each submit, skip, or daily submit counts as one row; **the same question can contribute multiple times** if practiced multiple times that day)
+  - **`count`**: number of `practice_records` rows with that `date(created_at)` (each submit, skip, or daily submit counts as one row; **the same question can contribute multiple times** if practiced multiple times that day)
   - **`level`**: `0` gray (0 questions or future days); `1` 1–9; `2` 10–19; `3` 20–49; `4` 50+
   - **`total_questions`**: sum of `count` over the window (only days ≤ `today` contribute non-zero counts; future cells are `0`)
   - **`active_days`**: days in the window with `count > 0` and `date ≤ today`
@@ -128,7 +129,7 @@ When any API is added/removed/changed, update this file in the same commit.
 
 ```json
 {
-  "timezone": "Asia/Shanghai",
+  "timezone": "storage-date(created_at)",
   "start_date": "2025-04-06",
   "end_date": "2026-04-11",
   "today": "2026-04-11",
@@ -148,11 +149,11 @@ When any API is added/removed/changed, update this file in the same commit.
 - Query:
   - `page` (>=1, default 1)
   - `page_size` (1–200, default 20)
-  - `shanghai_date` (optional): `YYYY-MM-DD` in **Asia/Shanghai**; only rows whose `created_at` falls on that calendar day (same bucketing as `/api/practice/activity`)
+  - `shanghai_date` (optional): `YYYY-MM-DD`; same as SQL `date(created_at)` (same bucketing as `/api/practice/activity` cells)
 - Description:
   - Every row in `practice_records` (session submit, session skip, daily submit), newest first
   - Includes `question_stem` (or placeholder if the question row was removed)
-  - Filtering by `shanghai_date` makes **`total`** match the heatmap cell **`count`** for that date when DB timestamps are stored as naive UTC consistently
+  - Filtering by `shanghai_date` makes **`total`** match the heatmap **`count`** for that calendar date
 - Response example:
 
 ```json

@@ -266,7 +266,7 @@ async function submitDailyAnswer() {
     <div class="gh-card">
       <h3 class="gh-card-title">做题热力图</h3>
       <p class="gh-card-desc">
-        按 <strong>Asia/Shanghai</strong> 日历日统计 <code>practice_records</code> 条数（每次提交 / 跳过 / 每日一题各 1 条；同一题多次作答会计多条）。最近 53 周 · 窗口内共
+        按数据库里 <code>created_at</code> 的<strong>日历日</strong>统计（与 SQLite <code>date(created_at)</code> 一致；不再把 naive 时间先当 UTC 再换算上海，避免和你在 DB 里按日期对账时对不上）。每次提交 / 跳过 / 每日一题各 1 条；同一题多次作答会计多条。最近 53 周 · 窗口内共
         <strong>{{ activity?.total_questions ?? "—" }}</strong>
         条，活跃
         <strong>{{ activity?.active_days ?? "—" }}</strong>

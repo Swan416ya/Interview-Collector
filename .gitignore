@@ -18,3 +18,7 @@ dist/
 .vscode/
 .idea/
 
+# Local crawls (see scripts/crawl_interview_guides.py)
+data/crawled_guides/
+data/crawled_guides_test/
+

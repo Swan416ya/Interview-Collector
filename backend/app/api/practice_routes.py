@@ -34,25 +34,14 @@ except zoneinfo.ZoneInfoNotFoundError:
 _NUM_WEEKS = 53
 
 
-def _naive_dt_to_shanghai_date(dt: datetime) -> date:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_ACTIVITY_TZ).date()
-
-
-def _shanghai_calendar_day_to_utc_naive_bounds(d: date) -> tuple[datetime, datetime]:
-    """Inclusive start / exclusive end in naive UTC for rows stored as UTC wall times."""
-    lower = (
-        datetime.combine(d, datetime.min.time(), tzinfo=_ACTIVITY_TZ)
-        .astimezone(timezone.utc)
-        .replace(tzinfo=None)
-    )
-    upper = (
-        datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=_ACTIVITY_TZ)
-        .astimezone(timezone.utc)
-        .replace(tzinfo=None)
-    )
-    return lower, upper
+def _coerce_sql_date_value(val) -> date:
+    """Normalize DATE / string from SQLite (str) or PostgreSQL (date) etc."""
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    s = str(val).strip()[:10]
+    return date.fromisoformat(s)
 
 
 def _sunday_start_of_week(d: date) -> date:
@@ -76,36 +65,30 @@ def _count_level(n: int) -> int:
 @router.get("/activity", response_model=PracticeActivityResponse)
 def practice_activity_heatmap(db: Session = Depends(get_db)):
     """
-    Dense last-53-week window (371 days), Sunday-first columns, dates in Asia/Shanghai.
-    Count = number of **practice_records rows** that calendar day (each submit / skip / daily
-    creates one row). Same question answered multiple times counts multiple times.
+    Dense last-53-week window (371 days), Sunday-first columns.
+
+    Each cell's **count** uses the **calendar date of `created_at` as stored in the DB**
+    (SQL `date(created_at)` / SQLite `date(created_at)`), **without** re-interpreting naive
+    timestamps as UTC then shifting to Shanghai. That matches raw-SQL row counts like
+    `WHERE date(created_at) = '2026-04-11'` and avoids off-by-one vs. DB browser totals.
+
+    `today` (future cells greyed) still uses Asia/Shanghai wall date for UX.
     """
     today = datetime.now(_ACTIVITY_TZ).date()
     end_sunday = _sunday_start_of_week(today)
     start_sunday = end_sunday - timedelta(weeks=_NUM_WEEKS - 1)
     end_last = start_sunday + timedelta(days=_NUM_WEEKS * 7 - 1)
 
-    lower_naive = (
-        datetime.combine(start_sunday, datetime.min.time(), tzinfo=_ACTIVITY_TZ)
-        .astimezone(timezone.utc)
-        .replace(tzinfo=None)
+    day_key = func.date(PracticeRecord.created_at)
+    agg_stmt = (
+        select(day_key, func.count(PracticeRecord.id))
+        .where(day_key >= start_sunday, day_key <= end_last)
+        .group_by(day_key)
     )
-    upper_exclusive_naive = (
-        datetime.combine(end_last + timedelta(days=1), datetime.min.time(), tzinfo=_ACTIVITY_TZ)
-        .astimezone(timezone.utc)
-        .replace(tzinfo=None)
-    )
-
-    rows = db.scalars(
-        select(PracticeRecord.created_at).where(
-            PracticeRecord.created_at >= lower_naive,
-            PracticeRecord.created_at < upper_exclusive_naive,
-        )
-    ).all()
-
+    agg_rows = db.execute(agg_stmt).all()
     per_day: Counter[date] = Counter()
-    for ts in rows:
-        per_day[_naive_dt_to_shanghai_date(ts)] += 1
+    for day_val, cnt in agg_rows:
+        per_day[_coerce_sql_date_value(day_val)] += int(cnt)
 
     days_out: list[PracticeActivityDayOut] = []
     total_questions = 0
@@ -124,7 +107,7 @@ def practice_activity_heatmap(db: Session = Depends(get_db)):
         d += timedelta(days=1)
 
     return PracticeActivityResponse(
-        timezone="Asia/Shanghai",
+        timezone="storage-date(created_at)",
         start_date=start_sunday.isoformat(),
         end_date=end_last.isoformat(),
         today=today.isoformat(),
@@ -140,26 +123,21 @@ def list_all_practice_records(
     page_size: int = Query(default=20, ge=1, le=200),
     shanghai_date: str | None = Query(
         default=None,
-        description="Filter to calendar day in Asia/Shanghai (YYYY-MM-DD); matches heatmap bucketing",
+        description="YYYY-MM-DD; same as SQL date(created_at) and heatmap cell (storage calendar day)",
     ),
     db: Session = Depends(get_db),
 ):
     """
     Paginated log of every practice row (session submit/skip, daily submit).
-    Use `shanghai_date` to reconcile counts with GET /api/practice/activity for that day.
+    Use `shanghai_date` to reconcile row count with GET /api/practice/activity for that date.
     """
-    bounds: tuple[datetime, datetime] | None = None
+    base_filter = []
     if shanghai_date is not None and shanghai_date.strip():
         try:
             d = date.fromisoformat(shanghai_date.strip())
         except ValueError:
             raise HTTPException(status_code=400, detail="shanghai_date must be YYYY-MM-DD") from None
-        bounds = _shanghai_calendar_day_to_utc_naive_bounds(d)
-
-    base_filter = []
-    if bounds is not None:
-        lo, hi = bounds
-        base_filter = [PracticeRecord.created_at >= lo, PracticeRecord.created_at < hi]
+        base_filter = [func.date(PracticeRecord.created_at) == d]
 
     count_stmt = select(func.count(PracticeRecord.id))
     if base_filter:

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Interview Collector · 牛客面经一键入库
 // @namespace    https://github.com/local/interview-collector
-// @version      1.0.0
-// @description  在牛客面试经验列表/讨论页注入「+」，调用本地 Interview Collector 后端的 /api/import/preview 与 /api/import/commit
+// @version      1.0.4
+// @description  在牛客面试经验列表/讨论页注入「+」，调用本地后端的 /api/import/preview 与逐题 /api/import/commit-one（与前端导入页一致）
 // @author       Interview-Collector
 // @match        https://www.nowcoder.com/interview/center*
 // @match        https://www.nowcoder.com/discuss/*
@@ -23,7 +23,8 @@
   const API_BASE = "http://127.0.0.1:8000";
 
   const PREVIEW_TIMEOUT_MS = 120_000;
-  const COMMIT_TIMEOUT_MS = 180_000;
+  /** 与 frontend importing.ts commitImportOne 一致：单题含生成参考答案 */
+  const COMMIT_ONE_TIMEOUT_MS = 120_000;
 
   GM_addStyle(`
     .ic-nc-import-btn {
@@ -121,18 +122,62 @@
       color: #fff;
     }
     .ic-nc-panel footer button:disabled { opacity: .5; cursor: not-allowed; }
-    .ic-nc-q {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-      padding: 10px 0;
-      border-bottom: 1px solid #f0f0f0;
+    .ic-nc-import-row {
+      display: block;
+      border: 2px solid #d0d7de;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      background: #fff;
       font-size: 13px;
     }
-    .ic-nc-q:last-child { border-bottom: none; }
-    .ic-nc-q input[type=checkbox] { margin-top: 4px; }
-    .ic-nc-q .ic-nc-meta { color: #666; font-size: 12px; margin-top: 4px; }
-    .ic-nc-q .ic-nc-stem { white-space: pre-wrap; word-break: break-word; }
+    .ic-nc-import-row:last-child { margin-bottom: 0; }
+    .ic-nc-import-row--ok {
+      border-color: #2ea043;
+      background: #dcffe4;
+      box-shadow: 0 0 0 1px rgba(46, 160, 67, 0.2);
+    }
+    .ic-nc-import-row--err {
+      border-color: #cf222e;
+      background: #fff5f5;
+    }
+    .ic-nc-import-row--loading {
+      border-color: #0969da;
+      background: #f6f8fa;
+    }
+    .ic-nc-import-row-head {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .ic-nc-import-row-head input[type=checkbox] { margin: 0; }
+    .ic-nc-import-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .ic-nc-import-badge--ok { background: #2ea043; color: #fff; }
+    .ic-nc-import-badge--loading { background: #0969da; color: #fff; }
+    .ic-nc-import-badge--err { background: #cf222e; color: #fff; }
+    .ic-nc-import-row .ic-nc-meta { color: #666; font-size: 12px; margin-top: 4px; }
+    .ic-nc-import-row .ic-nc-stem { white-space: pre-wrap; word-break: break-word; }
+    .ic-nc-import-row .ic-nc-err-line {
+      color: #cf222e;
+      font-size: 12px;
+      margin-top: 6px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ic-nc-footer-progress {
+      flex: 1 0 100%;
+      font-size: 13px;
+      color: #444;
+      margin-bottom: 4px;
+      line-height: 1.4;
+    }
     .ic-nc-toast {
       position: fixed;
       left: 50%;
@@ -217,22 +262,26 @@
     return res.responseText;
   }
 
-  function discussIdFromHref(href) {
+  /** @returns {{ id: string, type: 'discuss' | 'feed' } | null} */
+  function extractPostInfoFromHref(href) {
     if (!href) return null;
-    const m = String(href).match(/\/discuss\/(\d+)/);
-    return m ? m[1] : null;
+    const h = String(href);
+    let m = h.match(/\/discuss\/(\d+)/);
+    if (m && m[1]) return { id: m[1], type: "discuss" };
+    m = h.match(/\/feed\/main\/detail\/([^/?#]+)/i);
+    if (m && m[1]) return { id: m[1], type: "feed" };
+    return null;
   }
 
-  function normalizeDiscussUrl(href) {
-    const id = discussIdFromHref(href);
-    if (!id) return null;
-    try {
-      const u = new URL(href, "https://www.nowcoder.com");
-      if (!u.hostname.endsWith("nowcoder.com")) return null;
-      return `${u.origin}/discuss/${id}`;
-    } catch {
-      return null;
+  function normalizePostUrl(postInfo) {
+    if (!postInfo || !postInfo.id || !postInfo.type) return null;
+    if (postInfo.type === "discuss") {
+      return `https://www.nowcoder.com/discuss/${postInfo.id}`;
     }
+    if (postInfo.type === "feed") {
+      return `https://www.nowcoder.com/feed/main/detail/${postInfo.id}`;
+    }
+    return null;
   }
 
   /** 从讨论页 Document 中尽量抽取正文（列表页抓取或当前页） */
@@ -274,6 +323,19 @@
     overlay.remove();
   }
 
+  function questionToCommitPayload(q) {
+    return {
+      stem: String(q.stem || "").trim(),
+      category_name: q.category_name,
+      roles: Array.isArray(q.roles) ? q.roles : [],
+      companies: Array.isArray(q.companies) ? q.companies : [],
+      difficulty: typeof q.difficulty === "number" ? q.difficulty : 3,
+    };
+  }
+
+  /**
+   * 与 frontend ImportView.vue 一致：逐题 commit-one（每题生成参考答案后入库），失败不阻断其余题目。
+   */
   function openSelectModal(questions, onConfirm) {
     const overlay = document.createElement("div");
     overlay.className = "ic-nc-overlay";
@@ -283,22 +345,61 @@
     overlay.addEventListener("click", () => closeOverlay(overlay));
 
     const header = document.createElement("header");
-    header.textContent = `AI 提取到 ${questions.length} 道题，勾选后入库`;
+    header.textContent = `AI 提取到 ${questions.length} 道题，勾选后逐题生成答案并入库`;
     const body = document.createElement("div");
     body.className = "ic-nc-body";
 
     const selected = questions.map(() => true);
+    /** @type {("idle"|"loading"|"ok"|"err")[]} */
+    const rowStatus = questions.map(() => "idle");
+    const rowRefs = [];
+
+    function applyRowVisual(idx) {
+      const st = rowStatus[idx];
+      const ref = rowRefs[idx];
+      if (!ref) return;
+      const { wrap, badge, errLine, cb } = ref;
+      wrap.className = "ic-nc-import-row";
+      if (st === "ok") wrap.classList.add("ic-nc-import-row--ok");
+      else if (st === "err") wrap.classList.add("ic-nc-import-row--err");
+      else if (st === "loading") wrap.classList.add("ic-nc-import-row--loading");
+      cb.disabled = st === "loading";
+      badge.className = "ic-nc-import-badge";
+      badge.style.display = "inline";
+      if (st === "loading") {
+        badge.classList.add("ic-nc-import-badge--loading");
+        badge.textContent = "正在生成参考答案并入库…";
+      } else if (st === "ok") {
+        badge.classList.add("ic-nc-import-badge--ok");
+        badge.textContent = ref.savedId != null ? `已入库 #${ref.savedId}` : "已入库";
+      } else if (st === "err") {
+        badge.classList.add("ic-nc-import-badge--err");
+        badge.textContent = "失败（可重试）";
+      } else {
+        badge.style.display = "none";
+        badge.textContent = "";
+      }
+    }
 
     questions.forEach((q, idx) => {
-      const row = document.createElement("div");
-      row.className = "ic-nc-q";
+      const wrap = document.createElement("div");
+      wrap.className = "ic-nc-import-row";
+      const head = document.createElement("div");
+      head.className = "ic-nc-import-row-head";
       const cb = document.createElement("input");
       cb.type = "checkbox";
       cb.checked = true;
       cb.addEventListener("change", () => {
         selected[idx] = cb.checked;
       });
-      const right = document.createElement("div");
+      const num = document.createElement("strong");
+      num.textContent = `题目 ${idx + 1}`;
+      const badge = document.createElement("span");
+      badge.style.display = "none";
+      head.appendChild(cb);
+      head.appendChild(num);
+      head.appendChild(badge);
+
       const stem = document.createElement("div");
       stem.className = "ic-nc-stem";
       stem.textContent = q.stem || "(无题干)";
@@ -314,14 +415,26 @@
       ]
         .filter(Boolean)
         .join(" · ");
-      right.appendChild(stem);
-      if (meta.textContent) right.appendChild(meta);
-      row.appendChild(cb);
-      row.appendChild(right);
-      body.appendChild(row);
+      const errLine = document.createElement("div");
+      errLine.className = "ic-nc-err-line";
+      errLine.style.display = "none";
+
+      wrap.appendChild(head);
+      wrap.appendChild(stem);
+      if (meta.textContent) wrap.appendChild(meta);
+      wrap.appendChild(errLine);
+      body.appendChild(wrap);
+
+      rowRefs[idx] = { wrap, badge, errLine, cb, savedId: null };
     });
 
     const footer = document.createElement("footer");
+    footer.style.flexWrap = "wrap";
+
+    const progressEl = document.createElement("div");
+    progressEl.className = "ic-nc-footer-progress";
+    progressEl.style.display = "none";
+
     const btnAll = document.createElement("button");
     btnAll.type = "button";
     btnAll.textContent = "全选";
@@ -334,51 +447,100 @@
     const btnOk = document.createElement("button");
     btnOk.type = "button";
     btnOk.className = "ic-nc-primary";
-    btnOk.textContent = "入库选中项";
-
-    const checkboxes = () => body.querySelectorAll('input[type="checkbox"]');
+    btnOk.textContent = "逐个导入勾选题目（未入库）";
 
     btnAll.addEventListener("click", () => {
-      checkboxes().forEach((c, i) => {
-        c.checked = true;
+      rowRefs.forEach((_, i) => {
+        if (rowStatus[i] === "loading") return;
+        rowRefs[i].cb.checked = true;
         selected[i] = true;
       });
     });
     btnNone.addEventListener("click", () => {
-      checkboxes().forEach((c, i) => {
-        c.checked = false;
+      rowRefs.forEach((_, i) => {
+        if (rowStatus[i] === "loading") return;
+        rowRefs[i].cb.checked = false;
         selected[i] = false;
       });
     });
     btnCancel.addEventListener("click", () => closeOverlay(overlay));
 
+    function setCommittingUi(committing, text) {
+      btnOk.disabled = committing;
+      btnAll.disabled = committing;
+      btnNone.disabled = committing;
+      if (committing) {
+        progressEl.style.display = "block";
+        progressEl.textContent = text || "";
+        btnOk.textContent = "正在逐题导入…";
+      } else {
+        progressEl.style.display = "none";
+        progressEl.textContent = "";
+        btnOk.textContent = "逐个导入勾选题目（未入库）";
+      }
+    }
+
     btnOk.addEventListener("click", async () => {
-      const picked = questions.filter((_, i) => selected[i]);
-      if (!picked.length) {
-        toast("请至少选择一道题", true);
+      const indices = questions
+        .map((_, i) => i)
+        .filter((i) => selected[i] && rowStatus[i] !== "ok");
+
+      if (!indices.length) {
+        const anyOk = rowStatus.some((s) => s === "ok");
+        toast(
+          anyOk ? "所选题目均已入库，或请勾选尚未入库的题目" : "请至少勾选一题再导入",
+          true
+        );
         return;
       }
-      const payload = {
-        questions: picked.map((q) => ({
-          stem: String(q.stem || "").trim(),
-          category_name: q.category_name,
-          roles: Array.isArray(q.roles) ? q.roles : [],
-          companies: Array.isArray(q.companies) ? q.companies : [],
-          difficulty: typeof q.difficulty === "number" ? q.difficulty : 3,
-        })),
-      };
-      btnOk.disabled = true;
+
+      setCommittingUi(true, "");
+      let ok = 0;
+      let err = 0;
+      let lastErrMsg = "";
+
       try {
-        const r = await apiPost("/api/import/commit", payload, COMMIT_TIMEOUT_MS);
-        toast(`入库完成：新增题目 ${r.created_questions ?? 0} 道`);
-        closeOverlay(overlay);
-        if (typeof onConfirm === "function") onConfirm();
-      } catch (e) {
-        toast(String(e.message || e), true);
-        btnOk.disabled = false;
+        for (let n = 0; n < indices.length; n += 1) {
+          const idx = indices[n];
+          const displayN = n + 1;
+          const displayStem = String(questions[idx].stem || "").trim().slice(0, 42);
+          progressEl.textContent = `正在处理第 ${displayN} / ${indices.length} 题：生成参考答案并入库${displayStem ? ` — ${displayStem}${displayStem.length >= 42 ? "…" : ""}` : ""}`;
+
+          rowRefs[idx].errLine.style.display = "none";
+          rowRefs[idx].errLine.textContent = "";
+          rowStatus[idx] = "loading";
+          applyRowVisual(idx);
+
+          try {
+            const res = await apiPost(
+              "/api/import/commit-one",
+              questionToCommitPayload(questions[idx]),
+              COMMIT_ONE_TIMEOUT_MS
+            );
+            rowStatus[idx] = "ok";
+            rowRefs[idx].savedId = res.id != null ? res.id : null;
+            ok += 1;
+          } catch (e) {
+            rowStatus[idx] = "err";
+            err += 1;
+            lastErrMsg = String(e.message || e);
+            rowRefs[idx].errLine.textContent = lastErrMsg;
+            rowRefs[idx].errLine.style.display = "block";
+          }
+          applyRowVisual(idx);
+        }
+
+        toast(
+          `本轮导入结束：成功 ${ok} 道，失败 ${err} 道` + (err && lastErrMsg ? `。末条错误：${lastErrMsg.slice(0, 120)}` : ""),
+          err > 0 && ok === 0
+        );
+        if (typeof onConfirm === "function" && ok > 0) onConfirm();
+      } finally {
+        setCommittingUi(false);
       }
     });
 
+    footer.appendChild(progressEl);
     footer.appendChild(btnAll);
     footer.appendChild(btnNone);
     footer.appendChild(btnCancel);
@@ -410,7 +572,7 @@
     }
   }
 
-  async function runFromDiscussUrl(pageUrl, btn) {
+  async function runFromPostUrl(pageUrl, btn) {
     if (btn) btn.disabled = true;
     try {
       const html = await apiGet(pageUrl, 45_000);
@@ -424,56 +586,181 @@
     }
   }
 
-  function injectPlusAfterLink(anchor, pageUrl) {
-    const id = discussIdFromHref(pageUrl);
-    if (id) {
-      const existing = document.querySelector(`.ic-nc-import-btn[data-ic-discuss-id="${id}"]`);
-      if (existing && document.body.contains(existing)) return;
+  /** @returns {{ id: string, type: 'discuss' | 'feed', href?: string } | null} */
+  function anchorPostMeta(a) {
+    const href = a && a.getAttribute("href");
+    const info = extractPostInfoFromHref(href);
+    if (!info) return null;
+    return { ...info, href: href || undefined };
+  }
+
+  /**
+   * 从卡片容器内解析面经 / 动态链接：优先隐藏规范链，再内容区直链，最后容器内任意匹配。
+   */
+  function pickPostInfoFromContainer(container) {
+    const candidates = container.querySelectorAll(
+      'a[href*="/discuss/"], a[href*="/feed/main/detail/"]'
+    );
+    for (const a of candidates) {
+      const st = (a.getAttribute("style") || "").replace(/\s/g, "").toLowerCase();
+      if (!st.includes("display:none")) continue;
+      const meta = anchorPostMeta(a);
+      if (meta) return meta;
     }
-    const next = anchor.nextElementSibling;
-    if (next && next.classList.contains("ic-nc-import-btn")) return;
+    const direct = container.querySelector(
+      '[id^="feed-post-content-"] > a[href], [id^="feed-dynamic-content-"] > a[href]'
+    );
+    if (direct) {
+      const meta = anchorPostMeta(direct);
+      if (meta) return meta;
+    }
+    const inContent = container.querySelector(
+      '[id^="feed-post-content-"] a[href*="/discuss/"], [id^="feed-dynamic-content-"] a[href*="/feed/main/detail/"]'
+    );
+    if (inContent) {
+      const meta = anchorPostMeta(inContent);
+      if (meta) return meta;
+    }
+    for (const a of candidates) {
+      const meta = anchorPostMeta(a);
+      if (meta) return meta;
+    }
+    return null;
+  }
+
+  function resolveFetchUrl(post) {
+    if (post.href) {
+      try {
+        const u = new URL(post.href, "https://www.nowcoder.com");
+        if (u.hostname.endsWith("nowcoder.com")) {
+          if (post.type === "discuss") return `${u.origin}/discuss/${post.id}`;
+          return `${u.origin}/feed/main/detail/${post.id}`;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    return normalizePostUrl(post);
+  }
+
+  function injectButtonForPost(postContainer, postInfo) {
+    if (postContainer.classList.contains("ic-nc-button-injected")) return;
+    if (postContainer.querySelector(".ic-nc-import-btn")) {
+      postContainer.classList.add("ic-nc-button-injected");
+      return;
+    }
+
+    const pageUrl = resolveFetchUrl(postInfo);
+    if (!pageUrl) return;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "ic-nc-import-btn";
-    if (id) btn.dataset.icDiscussId = id;
-    btn.title = "Interview Collector：AI 提取本题并入库";
+    btn.dataset.icPostId = postInfo.id;
+    btn.dataset.icPostType = postInfo.type;
+    btn.title =
+      postInfo.type === "discuss"
+        ? "Interview Collector：AI 提取本面经并入库"
+        : "Interview Collector：AI 提取本动态并入库";
     btn.textContent = "+";
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      void runFromDiscussUrl(pageUrl, btn);
+      void runFromPostUrl(resolveFetchUrl(postInfo), btn);
     });
-    anchor.insertAdjacentElement("afterend", btn);
+
+    const interactionBar =
+      postContainer.querySelector(
+        "div[data-v-0184fa4e][class*='tw-flex'][class*='tw-items-center']"
+      ) ||
+      postContainer.querySelector("div[class*='tw-flex'][class*='tw-items-center'][class*='tw-justify']") ||
+      postContainer.querySelector("div[class*='tw-flex'][class*='tw-items-center']");
+
+    if (interactionBar) {
+      interactionBar.insertBefore(btn, interactionBar.firstChild);
+      postContainer.classList.add("ic-nc-button-injected");
+      return;
+    }
+
+    const contentAnchor = postContainer.querySelector(
+      '[id^="feed-post-content-"] > a[href], [id^="feed-dynamic-content-"] > a[href]'
+    );
+    if (contentAnchor) {
+      const next = contentAnchor.nextElementSibling;
+      if (next && next.classList.contains("ic-nc-import-btn")) {
+        postContainer.classList.add("ic-nc-button-injected");
+        return;
+      }
+      contentAnchor.insertAdjacentElement("afterend", btn);
+      postContainer.classList.add("ic-nc-button-injected");
+    } else {
+      console.warn("[ic-nc] No injection point for post card", postInfo);
+    }
+  }
+
+  /**
+   * 面经中心瀑布流：按「一条卡片一个容器」扫描，避免隐藏链与正文链各插一次导致双按钮；
+   * 同时支持 /discuss/ 与 /feed/main/detail/ 动态。
+   */
+  function feedCardRootForAnchor(a) {
+    let el = a.parentElement;
+    for (let depth = 0; depth < 14 && el; depth++) {
+      if (el === document.body) break;
+      const tag = el.tagName;
+      if (tag === "LI" || tag === "ARTICLE") return el;
+      const cls = el.className;
+      const s = typeof cls === "string" ? cls : "";
+      if (
+        /(item|card|feed|post|cell|tile|waterfall|dynamic|experience|moment|timeline)/i.test(s)
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return a.parentElement || a;
+  }
+
+  function collectInterviewCenterPostContainers() {
+    const allVue = [...document.querySelectorAll('div[data-v-d76f06c2=""]')];
+    if (allVue.length) {
+      return allVue.filter(
+        (el) => !allVue.some((other) => other !== el && other.contains(el))
+      );
+    }
+
+    const roots = new Set();
+    const anchors = [...document.querySelectorAll('a[href*="/discuss/"], a[href*="/feed/main/detail/"]')].filter(
+      (a) => {
+        if (a.closest?.("nav,header,footer,[role=navigation]")) return false;
+        if (
+          a.closest?.(".pagination,.pager,[class*='Pagination'],[class*='pagination'],[class*='breadcrumb']")
+        )
+          return false;
+        return true;
+      }
+    );
+    for (const a of anchors) {
+      roots.add(feedCardRootForAnchor(a));
+    }
+    return [...roots];
   }
 
   function scanInterviewCenterList() {
     if (!location.pathname.includes("/interview/center")) return;
 
-    const anchors = [...document.querySelectorAll('a[href*="/discuss/"]')];
-    /** @type {Map<string, HTMLAnchorElement>} */
-    const bestById = new Map();
-
-    function scoreAnchor(a) {
-      const t = (a.textContent || "").trim().length;
-      const inHeading = a.closest("h1,h2,h3,h4,[class*='title'],[class*='Title']");
-      return t + (inHeading ? 80 : 0);
+    for (const container of collectInterviewCenterPostContainers()) {
+      if (container.classList.contains("ic-nc-button-injected")) continue;
+      if (container.querySelector(".ic-nc-import-btn")) {
+        container.classList.add("ic-nc-button-injected");
+        continue;
+      }
+      const postInfo = pickPostInfoFromContainer(container);
+      if (!postInfo) {
+        console.warn("[ic-nc] Could not resolve post URL in card", container);
+        continue;
+      }
+      injectButtonForPost(container, postInfo);
     }
-
-    for (const a of anchors) {
-      const href = a.getAttribute("href");
-      const id = discussIdFromHref(href);
-      if (!id) continue;
-      const pageUrl = normalizeDiscussUrl(href);
-      if (!pageUrl) continue;
-      const prev = bestById.get(id);
-      if (!prev || scoreAnchor(a) > scoreAnchor(prev)) bestById.set(id, a);
-    }
-
-    bestById.forEach((a) => {
-      const pageUrl = normalizeDiscussUrl(a.getAttribute("href"));
-      if (pageUrl) injectPlusAfterLink(a, pageUrl);
-    });
   }
 
   function injectDiscussPageFab() {

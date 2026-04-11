@@ -73,21 +73,21 @@ onMounted(load);
           <strong>一行</strong>。同一道题当天做两次会算 <strong>两条</strong>，不是「去重后的题数」。
         </li>
         <li>
-          <strong>按哪一天算：</strong>热力图按 <strong>Asia/Shanghai（上海）</strong>的日历日，把每条记录的
-          <code>created_at</code> 归到某一天。数据库里若存的是「naive UTC」（推荐），后端会先当 UTC 再换到上海日期；若库里实际是别的时区的本地时间却未带时区，换日时可能<strong>和直觉差一天</strong>。
+          <strong>按哪一天算：</strong>热力图与下方筛选均按数据库里 <code>created_at</code> 的<strong>存储日历日</strong>（与
+          <code>date(created_at)</code> 一致）。以前在 naive 时间上先做「当 UTC 再转上海」会与你在 SQLite 里直接按日期统计的数量不一致（例如同一天在 DB 里很多行，接口却只显示十几条）。
         </li>
         <li>
           <strong>时间窗口：</strong>热力图只展示最近 <strong>53 周</strong>格子；更早的记录不会出现在格子里，但本页可以翻到（未删库的话）。
         </li>
         <li>
-          <strong>自查：</strong>在下面选一个「上海日期」筛选，本页<strong>总条数</strong>应与主页热力图<strong>同一天格子上的数字</strong>一致（同一天、同一套时区规则）。
+          <strong>自查：</strong>选一个日期筛选，本页<strong>总条数</strong>应与主页热力图<strong>同一天格子上的数字</strong>一致。
         </li>
       </ul>
     </div>
 
     <div class="swift-card filter-row">
       <label class="filter-label">
-        按上海日历日筛选
+        按记录日期（同 <code>date(created_at)</code>）
         <input v-model="shanghaiDate" type="date" class="filter-input" />
       </label>
       <button type="button" @click="applyFilter">应用</button>

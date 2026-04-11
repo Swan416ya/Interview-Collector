@@ -80,7 +80,9 @@ class PracticeActivityDayOut(BaseModel):
 
 
 class PracticeActivityResponse(BaseModel):
-    timezone: str
+    timezone: str = Field(
+        description="How day keys are derived: storage calendar date of created_at (SQL date(created_at)), not UTC→Shanghai conversion",
+    )
     start_date: str
     end_date: str
     today: str
