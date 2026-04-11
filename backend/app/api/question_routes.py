@@ -47,6 +47,8 @@ def list_questions(
             recent_subq.c.last_seen.desc() if order_desc else recent_subq.c.last_seen.asc(),
             Question.created_at.desc(),
         )
+    elif sort_by == "id":
+        stmt = stmt.order_by(Question.id.desc() if order_desc else Question.id.asc())
     else:
         stmt = stmt.order_by(Question.created_at.desc() if order_desc else Question.created_at.asc())
     return db.scalars(stmt).all()
@@ -88,6 +90,8 @@ def list_questions_page(
             recent_subq.c.last_seen.desc() if order_desc else recent_subq.c.last_seen.asc(),
             Question.created_at.desc(),
         )
+    elif sort_by == "id":
+        base_stmt = base_stmt.order_by(Question.id.desc() if order_desc else Question.id.asc())
     else:
         base_stmt = base_stmt.order_by(Question.created_at.desc() if order_desc else Question.created_at.asc())
 

@@ -13,6 +13,8 @@ from app.schemas.practice import (
     PracticeActivityDayOut,
     PracticeActivityResponse,
     PracticeCategoriesResponse,
+    PracticeRecordFeedItem,
+    PracticeRecordFeedPage,
     PracticeSkipRequest,
     PracticeSessionCustomStartRequest,
     PracticeSessionOut,
@@ -38,6 +40,21 @@ def _naive_dt_to_shanghai_date(dt: datetime) -> date:
     return dt.astimezone(_ACTIVITY_TZ).date()
 
 
+def _shanghai_calendar_day_to_utc_naive_bounds(d: date) -> tuple[datetime, datetime]:
+    """Inclusive start / exclusive end in naive UTC for rows stored as UTC wall times."""
+    lower = (
+        datetime.combine(d, datetime.min.time(), tzinfo=_ACTIVITY_TZ)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    upper = (
+        datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=_ACTIVITY_TZ)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    return lower, upper
+
+
 def _sunday_start_of_week(d: date) -> date:
     # Monday=0 .. Sunday=6 in Python; we want week starting Sunday (GitHub-style columns).
     return d - timedelta(days=(d.weekday() + 1) % 7)
@@ -60,7 +77,8 @@ def _count_level(n: int) -> int:
 def practice_activity_heatmap(db: Session = Depends(get_db)):
     """
     Dense last-53-week window (371 days), Sunday-first columns, dates in Asia/Shanghai.
-    Count = number of practice_records rows that day (submit + skip + daily).
+    Count = number of **practice_records rows** that calendar day (each submit / skip / daily
+    creates one row). Same question answered multiple times counts multiple times.
     """
     today = datetime.now(_ACTIVITY_TZ).date()
     end_sunday = _sunday_start_of_week(today)
@@ -114,6 +132,65 @@ def practice_activity_heatmap(db: Session = Depends(get_db)):
         active_days=active_days,
         days=days_out,
     )
+
+
+@router.get("/records", response_model=PracticeRecordFeedPage)
+def list_all_practice_records(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    shanghai_date: str | None = Query(
+        default=None,
+        description="Filter to calendar day in Asia/Shanghai (YYYY-MM-DD); matches heatmap bucketing",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Paginated log of every practice row (session submit/skip, daily submit).
+    Use `shanghai_date` to reconcile counts with GET /api/practice/activity for that day.
+    """
+    bounds: tuple[datetime, datetime] | None = None
+    if shanghai_date is not None and shanghai_date.strip():
+        try:
+            d = date.fromisoformat(shanghai_date.strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="shanghai_date must be YYYY-MM-DD") from None
+        bounds = _shanghai_calendar_day_to_utc_naive_bounds(d)
+
+    base_filter = []
+    if bounds is not None:
+        lo, hi = bounds
+        base_filter = [PracticeRecord.created_at >= lo, PracticeRecord.created_at < hi]
+
+    count_stmt = select(func.count(PracticeRecord.id))
+    if base_filter:
+        count_stmt = count_stmt.where(*base_filter)
+    total = int(db.scalar(count_stmt) or 0)
+
+    stmt = (
+        select(PracticeRecord, Question.stem)
+        .select_from(PracticeRecord)
+        .outerjoin(Question, PracticeRecord.question_id == Question.id)
+        .order_by(PracticeRecord.id.desc())
+    )
+    if base_filter:
+        stmt = stmt.where(*base_filter)
+
+    offset = (page - 1) * page_size
+    rows = db.execute(stmt.offset(offset).limit(page_size)).all()
+
+    items = [
+        PracticeRecordFeedItem(
+            id=rec.id,
+            session_id=rec.session_id,
+            question_id=rec.question_id,
+            question_stem=(qstem or "").strip() or "（题目已删除）",
+            user_answer=rec.user_answer or "",
+            ai_score=int(rec.ai_score),
+            created_at=rec.created_at,
+        )
+        for rec, qstem in rows
+    ]
+    return PracticeRecordFeedPage(total=total, page=page, page_size=page_size, items=items)
 
 
 def _update_mastery_by_formula(question: Question, latest_score_0_10: int) -> None:

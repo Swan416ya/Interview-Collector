@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { Chart, registerables } from "chart.js";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { fetchQuestionRecords, type PracticeRecord, type Question } from "../api/questions";
 import { fetchCategories } from "../api/taxonomy";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { useQuestionStore } from "../stores/questionStore";
+
+Chart.register(...registerables);
 
 const store = useQuestionStore();
 
@@ -24,6 +27,8 @@ const selectedQuestion = ref<Question | null>(null);
 const editing = ref(false);
 const recordsLoaded = ref(false);
 const records = ref<PracticeRecord[]>([]);
+const scoreChartCanvas = ref<HTMLCanvasElement | null>(null);
+let scoreTrendChart: Chart<"line", number[], string> | null = null;
 
 const editForm = reactive({
   stem: "",
@@ -75,18 +80,88 @@ async function changePage(nextPage: number) {
   await runFilter();
 }
 
-function openActionModal(q: Question) {
+function destroyScoreTrendChart() {
+  scoreTrendChart?.destroy();
+  scoreTrendChart = null;
+}
+
+function buildScoreTrendChart() {
+  destroyScoreTrendChart();
+  const canvas = scoreChartCanvas.value;
+  if (!canvas || !records.value.length) return;
+
+  const sorted = [...records.value].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const labels = sorted.map((r, i) => {
+    const t = (r.created_at ?? "").replace("T", " ").slice(0, 16);
+    return t || `#${i + 1}`;
+  });
+  const data = sorted.map((r) => Number(r.ai_score));
+
+  scoreTrendChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "得分 /10",
+          data,
+          borderColor: "#0969da",
+          backgroundColor: "rgba(9, 105, 218, 0.12)",
+          fill: true,
+          tension: 0.2,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          min: 0,
+          max: 10,
+          ticks: { stepSize: 1 }
+        }
+      },
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const v = ctx.parsed.y;
+              return v != null ? `得分 ${v} / 10` : "";
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+async function openActionModal(q: Question) {
   selectedQuestion.value = q;
   editForm.stem = q.stem;
   editForm.category = q.category;
   editForm.difficulty = q.difficulty;
   editing.value = false;
+  showActionModal.value = true;
   recordsLoaded.value = false;
   records.value = [];
-  showActionModal.value = true;
+  destroyScoreTrendChart();
+  try {
+    records.value = await fetchQuestionRecords(q.id);
+  } finally {
+    recordsLoaded.value = true;
+    await nextTick();
+    buildScoreTrendChart();
+  }
 }
 
 function closeActionModal() {
+  destroyScoreTrendChart();
   showActionModal.value = false;
   selectedQuestion.value = null;
   editing.value = false;
@@ -118,6 +193,8 @@ async function loadRecords() {
   if (!selectedQuestion.value) return;
   records.value = await fetchQuestionRecords(selectedQuestion.value.id);
   recordsLoaded.value = true;
+  await nextTick();
+  buildScoreTrendChart();
 }
 
 function difficultyStars(level: number): string {
@@ -235,7 +312,7 @@ onMounted(async () => {
           <div style="display: flex; gap: 8px; margin: 10px 0;">
             <button @click="editing = true">编辑题目</button>
             <button @click="removeCurrent">删除题目</button>
-            <button @click="loadRecords">查看做题记录</button>
+            <button @click="loadRecords">刷新做题记录</button>
           </div>
 
           <div v-if="editing" style="display: grid; gap: 8px; border: 1px solid #e6eaf2; padding: 10px; border-radius: 12px;">
@@ -249,20 +326,28 @@ onMounted(async () => {
           </div>
 
           <div v-if="recordsLoaded" style="margin-top: 12px;">
-            <h4 style="margin-bottom: 6px;">做题记录</h4>
-            <div style="display: grid; gap: 8px;">
-              <div v-for="r in records" :key="r.id" style="border: 1px solid #dde3ee; padding: 8px; border-radius: 10px;">
-                <div><strong>评分：</strong>{{ r.ai_score }}/10</div>
-                <div><strong>用户答案：</strong>{{ r.user_answer || "-" }}</div>
-                <div>
-                  <strong>AI 解析：</strong>
-                  <MarkdownRenderer v-if="r.ai_answer?.trim()" :source="r.ai_answer" />
-                  <span v-else>-</span>
-                </div>
-                <div style="font-size: 12px; color: #666;">时间：{{ r.created_at }}</div>
-              </div>
-              <p v-if="records.length === 0" style="color: #666;">暂无做题记录</p>
+            <h4 style="margin-bottom: 6px;">每次得分趋势</h4>
+            <p v-if="records.length === 0" style="color: #57606a; font-size: 13px; margin: 0 0 10px;">
+              暂无做题记录，无折线图。
+            </p>
+            <div v-else class="q-score-chart-wrap">
+              <canvas ref="scoreChartCanvas" />
             </div>
+            <template v-if="records.length">
+              <h4 style="margin: 16px 0 6px;">做题记录</h4>
+              <div style="display: grid; gap: 8px;">
+                <div v-for="r in records" :key="r.id" style="border: 1px solid #dde3ee; padding: 8px; border-radius: 10px;">
+                  <div><strong>评分：</strong>{{ r.ai_score }}/10</div>
+                  <div><strong>用户答案：</strong>{{ r.user_answer || "-" }}</div>
+                  <div>
+                    <strong>AI 解析：</strong>
+                    <MarkdownRenderer v-if="r.ai_answer?.trim()" :source="r.ai_answer" />
+                    <span v-else>-</span>
+                  </div>
+                  <div style="font-size: 12px; color: #666;">时间：{{ r.created_at }}</div>
+                </div>
+              </div>
+            </template>
           </div>
 
           <div style="margin-top: 12px;">
@@ -273,3 +358,11 @@ onMounted(async () => {
     </teleport>
   </section>
 </template>
+
+<style scoped>
+.q-score-chart-wrap {
+  position: relative;
+  height: 220px;
+  max-width: 100%;
+}
+</style>

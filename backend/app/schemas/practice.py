@@ -88,3 +88,22 @@ class PracticeActivityResponse(BaseModel):
     active_days: int
     days: list[PracticeActivityDayOut]
 
+
+class PracticeRecordFeedItem(BaseModel):
+    """Single row for global answer log (joins question stem)."""
+
+    id: int
+    session_id: int | None
+    question_id: int
+    question_stem: str
+    user_answer: str
+    ai_score: int
+    created_at: datetime
+
+
+class PracticeRecordFeedPage(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[PracticeRecordFeedItem]
+

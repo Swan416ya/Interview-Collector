@@ -32,7 +32,7 @@ When any API is added/removed/changed, update this file in the same commit.
 - Path: `/api/questions`
 - Description:
   - list questions with filter and sorting
-  - `sort_by` supports: `created_at`, `mastery_score`, `recent_encountered`
+  - `sort_by` supports: `created_at`, `mastery_score`, `recent_encountered`, `id`
   - `recent_encountered` means sort by latest practice record time
 - Response example:
 
@@ -112,7 +112,7 @@ When any API is added/removed/changed, update this file in the same commit.
 }
 ```
 
-### Practice Activity Heatmap (daily question count)
+### Practice Activity Heatmap (daily practice record counts)
 
 - Method: `GET`
 - Path: `/api/practice/activity`
@@ -120,7 +120,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - returns a **dense** list of **371** calendar days (53 weeks × 7 days) for a GitHub-style heatmap
   - dates use **`Asia/Shanghai`** (calendar date, not UTC)
   - window: from the Sunday of the week **52 weeks before** the Sunday of the current week, through **Saturday** of the current week (inclusive of all cells in the grid)
-  - **`count`**: number of `practice_records` rows whose `created_at` falls on that calendar day in Shanghai (each submit, skip, or daily submit counts as one)
+  - **`count`**: number of `practice_records` rows whose `created_at` falls on that calendar day in Shanghai (each submit, skip, or daily submit counts as one row; **the same question can contribute multiple times** if practiced multiple times that day)
   - **`level`**: `0` gray (0 questions or future days); `1` 1–9; `2` 10–19; `3` 20–49; `4` 50+
   - **`total_questions`**: sum of `count` over the window (only days ≤ `today` contribute non-zero counts; future cells are `0`)
   - **`active_days`**: days in the window with `count > 0` and `date ≤ today`
@@ -137,6 +137,39 @@ When any API is added/removed/changed, update this file in the same commit.
   "days": [
     { "date": "2025-04-06", "count": 0, "level": 0 },
     { "date": "2025-04-07", "count": 3, "level": 1 }
+  ]
+}
+```
+
+### Practice answer log (paginated, reconcile heatmap)
+
+- Method: `GET`
+- Path: `/api/practice/records`
+- Query:
+  - `page` (>=1, default 1)
+  - `page_size` (1–200, default 20)
+  - `shanghai_date` (optional): `YYYY-MM-DD` in **Asia/Shanghai**; only rows whose `created_at` falls on that calendar day (same bucketing as `/api/practice/activity`)
+- Description:
+  - Every row in `practice_records` (session submit, session skip, daily submit), newest first
+  - Includes `question_stem` (or placeholder if the question row was removed)
+  - Filtering by `shanghai_date` makes **`total`** match the heatmap cell **`count`** for that date when DB timestamps are stored as naive UTC consistently
+- Response example:
+
+```json
+{
+  "total": 128,
+  "page": 1,
+  "page_size": 20,
+  "items": [
+    {
+      "id": 501,
+      "session_id": 12,
+      "question_id": 3,
+      "question_stem": "TCP 三次握手…",
+      "user_answer": "…",
+      "ai_score": 7,
+      "created_at": "2026-04-11T08:15:00"
+    }
   ]
 }
 ```

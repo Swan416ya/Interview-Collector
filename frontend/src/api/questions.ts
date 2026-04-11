@@ -19,7 +19,7 @@ export interface CreateQuestionPayload {
 export interface QuestionFilters {
   category?: string;
   difficulty?: number;
-  sort_by?: "created_at" | "mastery_score" | "recent_encountered";
+  sort_by?: "created_at" | "mastery_score" | "recent_encountered" | "id";
   sort_order?: "asc" | "desc";
 }
 

@@ -50,6 +50,23 @@ export interface PracticeSessionListItem {
   created_at: string;
 }
 
+export interface PracticeRecordFeedItem {
+  id: number;
+  session_id: number | null;
+  question_id: number;
+  question_stem: string;
+  user_answer: string;
+  ai_score: number;
+  created_at: string;
+}
+
+export interface PracticeRecordFeedPage {
+  total: number;
+  page: number;
+  page_size: number;
+  items: PracticeRecordFeedItem[];
+}
+
 export interface PracticeActivityDay {
   date: string;
   count: number;
@@ -143,6 +160,15 @@ export async function fetchPracticeSessions(): Promise<PracticeSessionListItem[]
 
 export async function fetchPracticeActivity(): Promise<PracticeActivityResponse> {
   const { data } = await apiClient.get<PracticeActivityResponse>("/api/practice/activity");
+  return data;
+}
+
+export async function fetchPracticeRecordFeed(params: {
+  page?: number;
+  page_size?: number;
+  shanghai_date?: string;
+}): Promise<PracticeRecordFeedPage> {
+  const { data } = await apiClient.get<PracticeRecordFeedPage>("/api/practice/records", { params });
   return data;
 }
 

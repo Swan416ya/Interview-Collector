@@ -1,16 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { Chart, registerables } from "chart.js";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
-import { fetchPracticeActivity, submitDailyPracticeAnswer } from "../api/practice";
-import type { PracticeActivityDay, PracticeActivityResponse } from "../api/practice";
+import {
+  fetchPracticeActivity,
+  fetchPracticeSessions,
+  submitDailyPracticeAnswer,
+  type PracticeActivityDay,
+  type PracticeActivityResponse,
+  type PracticeSessionListItem
+} from "../api/practice";
 import { fetchQuestionRecords, fetchQuestions, type Question } from "../api/questions";
 import { mockUserProfile } from "../mock/userProfile";
 
+Chart.register(...registerables);
+
 const loading = ref(false);
 const activity = ref<PracticeActivityResponse | null>(null);
+const practiceSessions = ref<PracticeSessionListItem[]>([]);
+const trendCanvasRef = ref<HTMLCanvasElement | null>(null);
+let trendChart: Chart<"line", number[], string> | null = null;
+
 const dailyQuestion = ref<Question | null>(null);
-const dailyQuestionIndex = ref(0);
+/** 0-based index in id-sorted question list (stable for the day). */
+const dailyQuestionRank = ref(0);
+const questionBankTotal = ref(0);
 const showDailyModal = ref(false);
 const dailyAnswer = ref("");
 const dailySubmitting = ref(false);
@@ -23,6 +38,113 @@ function toDateKey(date: Date): string {
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
+const DAILY_QUESTION_LS = "ic.dailyQuestionId.";
+
+function fnv1a(input: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Same calendar day always maps to the same question (localStorage + stable hash fallback).
+ * List must be sorted by id ascending.
+ */
+function pickDailyQuestion(sortedById: Question[], dateKey: string): { question: Question; rank: number } {
+  const key = DAILY_QUESTION_LS + dateKey;
+  const stored = localStorage.getItem(key);
+  if (stored != null) {
+    const id = Number(stored);
+    if (Number.isFinite(id)) {
+      const rank = sortedById.findIndex((q) => q.id === id);
+      if (rank >= 0) return { question: sortedById[rank]!, rank };
+    }
+    localStorage.removeItem(key);
+  }
+  const rank = fnv1a(`${dateKey}|daily-v1`) % sortedById.length;
+  const question = sortedById[rank]!;
+  localStorage.setItem(key, String(question.id));
+  return { question, rank };
+}
+
+function sessionScorePercent(s: PracticeSessionListItem): number {
+  const qc = s.question_count ?? 10;
+  const max = qc * 10;
+  if (max <= 0) return 0;
+  return Math.min(100, Math.round((s.total_score / max) * 1000) / 10);
+}
+
+function destroyTrendChart() {
+  trendChart?.destroy();
+  trendChart = null;
+}
+
+function buildTrendChart() {
+  destroyTrendChart();
+  const canvas = trendCanvasRef.value;
+  if (!canvas) return;
+
+  const items = practiceSessions.value
+    .filter((s) => s.completed_at)
+    .slice()
+    .sort((a, b) => new Date(a.completed_at!).getTime() - new Date(b.completed_at!).getTime());
+  if (!items.length) return;
+
+  const labels = items.map((s, i) => {
+    const d = (s.completed_at ?? "").slice(0, 10);
+    return d || `#${i + 1}`;
+  });
+  const data = items.map(sessionScorePercent);
+
+  trendChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "得分率 %",
+          data,
+          borderColor: "#0969da",
+          backgroundColor: "rgba(9, 105, 218, 0.12)",
+          fill: true,
+          tension: 0.2,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { callback: (v) => `${v}%` }
+        }
+      },
+      plugins: {
+        legend: { display: true },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const pct = ctx.parsed.y;
+              return pct != null ? `得分率 ${pct}%` : "";
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+const hasTrendData = computed(
+  () => practiceSessions.value.some((s) => s.completed_at != null && s.completed_at !== "")
+);
 
 /** Colors aligned with GitHub contribution graph tiers (0–4 from API). */
 function levelColor(level: number): string {
@@ -60,37 +182,48 @@ const monthLabels = computed(() => {
 
 function cellTitle(cell: { date: string; count: number }, today: string): string {
   if (cell.date > today) return `${cell.date}（未到）`;
-  if (cell.count <= 0) return `${cell.date} 0 道题`;
-  return `${cell.date} ${cell.count} 道题`;
+  if (cell.count <= 0) return `${cell.date} 0 条记录`;
+  return `${cell.date} ${cell.count} 条答题记录`;
 }
 
 async function loadHomeData() {
   loading.value = true;
   try {
-    const [act, questions] = await Promise.all([
+    const [act, questions, sessions] = await Promise.all([
       fetchPracticeActivity(),
-      fetchQuestions({ sort_by: "mastery_score", sort_order: "asc" })
+      fetchQuestions({ sort_by: "id", sort_order: "asc" }),
+      fetchPracticeSessions()
     ]);
     activity.value = act;
+    practiceSessions.value = sessions;
 
     if (questions.length) {
-      const idx = new Date().getDate() % questions.length;
-      dailyQuestionIndex.value = idx;
-      dailyQuestion.value = questions[idx];
-      const records = await fetchQuestionRecords(questions[idx].id);
+      const sorted = [...questions].sort((a, b) => a.id - b.id);
+      questionBankTotal.value = sorted.length;
       const todayKey = toDateKey(new Date());
+      const { question, rank } = pickDailyQuestion(sorted, todayKey);
+      dailyQuestionRank.value = rank;
+      dailyQuestion.value = question;
+      const records = await fetchQuestionRecords(question.id);
       const todayRecord = records.find((r) => (r.created_at ?? "").slice(0, 10) === todayKey);
       dailyDoneScore.value = todayRecord ? Number(todayRecord.ai_score) : null;
     } else {
+      questionBankTotal.value = 0;
       dailyQuestion.value = null;
       dailyDoneScore.value = null;
     }
   } finally {
     loading.value = false;
+    await nextTick();
+    buildTrendChart();
   }
 }
 
 onMounted(loadHomeData);
+
+onUnmounted(() => {
+  destroyTrendChart();
+});
 
 function openDailyModal() {
   if (!dailyQuestion.value) return;
@@ -133,9 +266,9 @@ async function submitDailyAnswer() {
     <div class="gh-card">
       <h3 class="gh-card-title">做题热力图</h3>
       <p class="gh-card-desc">
-        按 <strong>Asia/Shanghai</strong> 日历日统计 <code>practice_records</code>（每次提交 / 跳过 / 每日一题各记 1 题）。最近 53 周 · 窗口内共
+        按 <strong>Asia/Shanghai</strong> 日历日统计 <code>practice_records</code> 条数（每次提交 / 跳过 / 每日一题各 1 条；同一题多次作答会计多条）。最近 53 周 · 窗口内共
         <strong>{{ activity?.total_questions ?? "—" }}</strong>
-        题，活跃
+        条，活跃
         <strong>{{ activity?.active_days ?? "—" }}</strong>
         天。
       </p>
@@ -179,15 +312,29 @@ async function submitDailyAnswer() {
           <span class="gh-legend-more">More</span>
         </div>
         <p class="gh-footnote">
-          色阶：0 题灰 · 1–9 浅绿 · 10–19 中绿 · 20–49 深绿 · 50 题及以上最深绿。
+          色阶：0 条灰 · 1–9 条浅绿 · 10–19 条中绿 · 20–49 条深绿 · 50 条及以上最深绿。
         </p>
+      </div>
+    </div>
+
+    <div class="trend-card">
+      <h3 class="trend-card-title">刷题得分率趋势</h3>
+      <p class="trend-card-desc">
+        横轴为每次<strong>已完成</strong>的刷题会话（按完成时间先后）；纵轴为本次得分 ÷ 满分（题数×10）× 100%。
+      </p>
+      <p v-if="loading" class="gh-muted">加载中...</p>
+      <p v-else-if="!hasTrendData" class="gh-muted">暂无已完成刷题记录，无趋势数据。</p>
+      <div v-else class="trend-chart-wrap">
+        <canvas ref="trendCanvasRef" />
       </div>
     </div>
 
     <div style="margin-top: 16px; border: 1px solid #ddd; border-radius: 8px; padding: 12px;">
       <h3 style="margin-top: 0;">每日一题</h3>
       <div v-if="dailyQuestion">
-        <div style="font-size: 13px; color: #666;">今日推荐索引：#{{ dailyQuestionIndex + 1 }}</div>
+        <div style="font-size: 13px; color: #666;">
+          今日题目：按题库 ID 升序第 {{ dailyQuestionRank + 1 }} 题 / 共 {{ questionBankTotal }} 题（本机当日固定，刷新不变）
+        </div>
         <div style="margin-top: 6px;"><strong>{{ dailyQuestion.stem }}</strong></div>
         <div style="margin-top: 6px; color: #444;">
           分类：{{ dailyQuestion.category }} ｜ 难度：{{ dailyQuestion.difficulty }} ｜ 当前掌握：{{ dailyQuestion.mastery_score }}%
@@ -398,5 +545,32 @@ async function submitDailyAnswer() {
   font-size: 11px;
   color: #6e7781;
   text-align: right;
+}
+
+.trend-card {
+  margin-top: 16px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  background: #fff;
+}
+
+.trend-card-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.trend-card-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #57606a;
+  line-height: 1.5;
+}
+
+.trend-chart-wrap {
+  position: relative;
+  height: 240px;
+  max-width: 100%;
 }
 </style>
