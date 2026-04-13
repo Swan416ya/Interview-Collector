@@ -1,6 +1,9 @@
 import 'dart:convert';
 
+import 'package:flex_color_scheme/flex_color_scheme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 
 const String apiBaseUrl = String.fromEnvironment(
@@ -17,12 +20,53 @@ class InterviewCollectorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final baseText = GoogleFonts.notoSansScTextTheme();
+    final colorScheme = FlexSchemeColor.from(
+      primary: const Color(0xFF7B61FF),
+      primaryContainer: const Color(0xFFE8DEFF),
+      secondary: const Color(0xFF7E71CF),
+      secondaryContainer: const Color(0xFFECE7FF),
+      tertiary: const Color(0xFF9E77ED),
+      tertiaryContainer: const Color(0xFFF1E9FF),
+      appBarColor: const Color(0xFFF8F6FF),
+    );
     return MaterialApp(
       title: 'Interview Collector',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
+      theme: FlexThemeData.light(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4F46E5)),
+        colors: colorScheme,
+        scaffoldBackground: const Color(0xFFF6F5FA),
+        surfaceMode: FlexSurfaceMode.levelSurfacesLowScaffold,
+        blendLevel: 10,
+        subThemesData: const FlexSubThemesData(
+          defaultRadius: 24,
+          cardRadius: 28,
+          inputDecoratorRadius: 24,
+          navigationBarHeight: 74,
+          navigationBarMutedUnselectedLabel: true,
+          filledButtonRadius: 20,
+          outlinedButtonRadius: 20,
+          segmentedButtonRadius: 18,
+        ),
+        textTheme: baseText,
+      ).copyWith(
+        textTheme: baseText,
+        cardTheme: const CardTheme(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          color: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(28))),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide.none,
+          ),
+        ),
       ),
       home: const AppShell(),
     );
@@ -49,22 +93,28 @@ class _AppShellState extends State<AppShell> {
     ];
     return Scaffold(
       body: pages[_index],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (v) => setState(() => _index = v),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '首页'),
-          NavigationDestination(
-            icon: Icon(Icons.menu_book_outlined),
-            selectedIcon: Icon(Icons.menu_book),
-            label: '题库',
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (v) => setState(() => _index = v),
+            destinations: const [
+              NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '首页'),
+              NavigationDestination(
+                icon: Icon(Icons.menu_book_outlined),
+                selectedIcon: Icon(Icons.menu_book),
+                label: '题库',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.psychology_alt_outlined),
+                selectedIcon: Icon(Icons.psychology_alt),
+                label: '练习',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.psychology_alt_outlined),
-            selectedIcon: Icon(Icons.psychology_alt),
-            label: '练习',
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -95,12 +145,12 @@ class _HomeTabState extends State<HomeTab> {
       error = null;
     });
     try {
-      final items = await widget.api.fetchQuestions();
+      final page = await widget.api.fetchQuestionsPage(page: 1, pageSize: 1);
       if (!mounted) return;
-      setState(() => total = items.length);
+      setState(() => total = page.total);
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString());
+      setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -119,7 +169,7 @@ class _HomeTabState extends State<HomeTab> {
               child: Container(
                 padding: const EdgeInsets.all(20),
                 decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)]),
+                  gradient: LinearGradient(colors: [Color(0xFF8D73FF), Color(0xFF6D4DFF)]),
                 ),
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -130,7 +180,7 @@ class _HomeTabState extends State<HomeTab> {
                   ],
                 ),
               ),
-            ),
+            ).animate().fadeIn(duration: 320.ms).slideY(begin: 0.08, end: 0),
             const SizedBox(height: 16),
             if (loading)
               const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
@@ -147,6 +197,7 @@ class _HomeTabState extends State<HomeTab> {
               ),
             const SizedBox(height: 16),
             const Card(
+              color: Color(0xFFEFEBFF),
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
@@ -160,7 +211,7 @@ class _HomeTabState extends State<HomeTab> {
                   ],
                 ),
               ),
-            ),
+            ).animate().fadeIn(delay: 120.ms, duration: 280.ms),
           ],
         ),
       ),
@@ -178,6 +229,7 @@ class _StatCard extends StatelessWidget {
     return SizedBox(
       width: 170,
       child: Card(
+        color: const Color(0xFFF2EEFF),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -219,12 +271,12 @@ class _QuestionsTabState extends State<QuestionsTab> {
       error = null;
     });
     try {
-      final data = await widget.api.fetchQuestions();
+      final page = await widget.api.fetchQuestionsPage(page: 1, pageSize: 50);
       if (!mounted) return;
-      setState(() => questions = data);
+      setState(() => questions = page.items);
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString());
+      setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -361,7 +413,7 @@ class _PracticeTabState extends State<PracticeTab> {
       setState(() => categories = data);
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString());
+      setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -383,7 +435,7 @@ class _PracticeTabState extends State<PracticeTab> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString());
+      setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -421,7 +473,7 @@ class _PracticeTabState extends State<PracticeTab> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => error = e.toString());
+      setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -451,6 +503,8 @@ class _PracticeTabState extends State<PracticeTab> {
                       (c) => ChoiceChip(
                         label: Text('${c.category} (${c.totalQuestions})'),
                         selected: selectedCategory == c.category,
+                        backgroundColor: Colors.white,
+                        selectedColor: const Color(0xFFE3DAFF),
                         onSelected: (_) => setState(() {
                           selectedCategory = selectedCategory == c.category ? null : c.category;
                         }),
@@ -489,7 +543,6 @@ class _PracticeTabState extends State<PracticeTab> {
                 maxLines: 5,
                 decoration: const InputDecoration(
                   labelText: '你的答案',
-                  border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 10),
@@ -545,11 +598,41 @@ class ApiClient {
   Uri _uri(String path, [Map<String, dynamic>? query]) =>
       Uri.parse('$baseUrl$path').replace(queryParameters: query?.map((k, v) => MapEntry(k, '$v')));
 
+  Future<http.Response> _guardedRequest(
+    Future<http.Response> Function() request, {
+    required Uri uri,
+    required String method,
+  }) async {
+    try {
+      return await request();
+    } catch (e, st) {
+      throw ApiException(
+        message: '网络请求异常($method)',
+        url: uri.toString(),
+        cause: e,
+        stackTrace: st,
+      );
+    }
+  }
+
   Future<List<QuestionItem>> fetchQuestions() async {
-    final res = await http.get(_uri('/api/questions'));
+    final uri = _uri('/api/questions');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final jsonList = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
     return jsonList.map((e) => QuestionItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<QuestionPage> fetchQuestionsPage({required int page, required int pageSize}) async {
+    final uri = _uri('/api/questions/page', {
+      'page': page,
+      'page_size': pageSize,
+      'sort_by': 'created_at',
+      'sort_order': 'desc',
+    });
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    return QuestionPage.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<QuestionItem> createQuestion({
@@ -557,17 +640,23 @@ class ApiClient {
     required String category,
     required int difficulty,
   }) async {
-    final res = await http.post(
-      _uri('/api/questions'),
+    final uri = _uri('/api/questions');
+    final res = await _guardedRequest(
+      () => http.post(
+      uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'stem': stem, 'category': category, 'difficulty': difficulty}),
+    ),
+      uri: uri,
+      method: 'POST',
     );
     _check(res);
     return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<List<PracticeCategory>> fetchPracticeCategories() async {
-    final res = await http.get(_uri('/api/practice/categories'));
+    final uri = _uri('/api/practice/categories');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final map = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return (map['categories'] as List<dynamic>)
@@ -577,41 +666,100 @@ class ApiClient {
 
   Future<PracticeSession> startPracticeSession(String? category, int count) async {
     final query = {'count': count, if (category != null) 'category': category};
-    final res = await http.post(_uri('/api/practice/sessions/start', query));
+    final uri = _uri('/api/practice/sessions/start', query);
+    final res = await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
     _check(res);
     return PracticeSession.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeSubmitResult> submitPracticeAnswer(int sessionId, int questionId, String userAnswer) async {
-    final res = await http.post(
-      _uri('/api/practice/sessions/$sessionId/submit'),
+    final uri = _uri('/api/practice/sessions/$sessionId/submit');
+    final res = await _guardedRequest(
+      () => http.post(
+      uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
+    ),
+      uri: uri,
+      method: 'POST',
     );
     _check(res);
     return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeSubmitResult> skipPracticeAnswer(int sessionId, int questionId) async {
-    final res = await http.post(
-      _uri('/api/practice/sessions/$sessionId/skip'),
+    final uri = _uri('/api/practice/sessions/$sessionId/skip');
+    final res = await _guardedRequest(
+      () => http.post(
+      uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'question_id': questionId}),
+    ),
+      uri: uri,
+      method: 'POST',
     );
     _check(res);
     return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeSummary> fetchPracticeSummary(int sessionId) async {
-    final res = await http.get(_uri('/api/practice/sessions/$sessionId/summary'));
+    final uri = _uri('/api/practice/sessions/$sessionId/summary');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     return PracticeSummary.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   void _check(http.Response res) {
     if (res.statusCode >= 200 && res.statusCode < 300) return;
-    throw Exception('请求失败(${res.statusCode}): ${utf8.decode(res.bodyBytes)}');
+    throw ApiException(
+      message: '请求失败',
+      url: res.request?.url.toString(),
+      statusCode: res.statusCode,
+      responseBody: utf8.decode(res.bodyBytes),
+    );
   }
+}
+
+class ApiException implements Exception {
+  ApiException({
+    required this.message,
+    this.url,
+    this.statusCode,
+    this.responseBody,
+    this.cause,
+    this.stackTrace,
+  });
+
+  final String message;
+  final String? url;
+  final int? statusCode;
+  final String? responseBody;
+  final Object? cause;
+  final StackTrace? stackTrace;
+
+  @override
+  String toString() {
+    final buf = StringBuffer()..writeln('ApiException: $message');
+    if (url != null) buf.writeln('url: $url');
+    if (statusCode != null) buf.writeln('statusCode: $statusCode');
+    if (responseBody != null && responseBody!.isNotEmpty) {
+      buf.writeln('responseBody: ${_shorten(responseBody!, 800)}');
+    }
+    if (cause != null) buf.writeln('cause: $cause');
+    if (stackTrace != null) buf.writeln('stack: ${_shorten(stackTrace.toString(), 1200)}');
+    return buf.toString().trim();
+  }
+}
+
+String _formatError(Object e) {
+  if (e is ApiException) return e.toString();
+  return 'ExceptionType: ${e.runtimeType}\n$e';
+}
+
+String _shorten(String value, int maxLen) {
+  final text = value.trim();
+  if (text.length <= maxLen) return text;
+  return '${text.substring(0, maxLen)}...(truncated)';
 }
 
 class QuestionItem {
@@ -635,6 +783,19 @@ class QuestionItem {
         category: json['category'] as String,
         difficulty: json['difficulty'] as int,
         masteryScore: json['mastery_score'] as int? ?? 0,
+      );
+}
+
+class QuestionPage {
+  QuestionPage({required this.total, required this.items});
+  final int total;
+  final List<QuestionItem> items;
+
+  factory QuestionPage.fromJson(Map<String, dynamic> json) => QuestionPage(
+        total: json['total'] as int? ?? 0,
+        items: (json['items'] as List<dynamic>? ?? const [])
+            .map((e) => QuestionItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 

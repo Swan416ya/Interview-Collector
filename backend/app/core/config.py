@@ -13,7 +13,10 @@ class Settings(BaseModel):
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./interview_collector.db")
     cors_origins: list[str] = [
         origin.strip()
-        for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:7357,http://localhost:7357",
+        ).split(",")
         if origin.strip()
     ]
     ai_base_url: str = os.getenv("AI_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
