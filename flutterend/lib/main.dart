@@ -91,6 +91,8 @@ class _AppShellState extends State<AppShell> {
       HomeTab(api: _api),
       QuestionsTab(api: _api),
       PracticeTab(api: _api),
+      PracticeHistoryTab(api: _api),
+      AnswerRecordsTab(api: _api),
     ];
     return Scaffold(
       body: pages[_index],
@@ -112,6 +114,16 @@ class _AppShellState extends State<AppShell> {
                 icon: Icon(Icons.psychology_alt_outlined),
                 selectedIcon: Icon(Icons.psychology_alt),
                 label: '练习',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.history_outlined),
+                selectedIcon: Icon(Icons.history),
+                label: '刷题记录',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.receipt_long_outlined),
+                selectedIcon: Icon(Icons.receipt_long),
+                label: '答题记录',
               ),
             ],
           ),
@@ -262,9 +274,9 @@ class _HomeTabState extends State<HomeTab> {
                     const SizedBox(height: 10),
                     Text('得分：${dailyResult!.score} / 10'),
                     const SizedBox(height: 6),
-                    Text('解析：\n${dailyResult!.analysis}'),
+                    SelectableText('解析：\n${dailyResult!.analysis}'),
                     const SizedBox(height: 6),
-                    Text('参考答案：\n${dailyResult!.referenceAnswer}'),
+                    SelectableText('参考答案：\n${dailyResult!.referenceAnswer}'),
                   ],
                 ],
               ),
@@ -325,9 +337,9 @@ class _HomeTabState extends State<HomeTab> {
             ).animate().fadeIn(duration: 320.ms).slideY(begin: 0.08, end: 0),
             const SizedBox(height: 16),
             if (loading)
-              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+              const AppLoadingView(padding: EdgeInsets.all(24))
             else if (error != null)
-              Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))
+              AppErrorText(error!)
             else
               Wrap(
                 spacing: 12,
@@ -498,6 +510,41 @@ class _StatCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class AppLoadingView extends StatelessWidget {
+  const AppLoadingView({super.key, this.padding = const EdgeInsets.all(20)});
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: padding,
+        child: const CircularProgressIndicator(),
+      ),
+    );
+  }
+}
+
+class AppEmptyCard extends StatelessWidget {
+  const AppEmptyCard(this.text, {super.key});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(child: Padding(padding: const EdgeInsets.all(14), child: Text(text)));
+  }
+}
+
+class AppErrorText extends StatelessWidget {
+  const AppErrorText(this.error, {super.key});
+  final String error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error));
   }
 }
 
@@ -769,11 +816,11 @@ class _QuestionsTabState extends State<QuestionsTab> {
             ),
             const SizedBox(height: 10),
             if (loading)
-              const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+              const AppLoadingView()
             else if (error != null)
               Padding(
                 padding: const EdgeInsets.all(8),
-                child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                child: AppErrorText(error!),
               )
             else ...[
               Text('当前页题数：${questions.length} / 总题数：$total'),
@@ -902,7 +949,7 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
           const SizedBox(height: 8),
           Text('分类：${question.category} ｜ 难度：${question.difficulty} ｜ 掌握度：${question.masteryScore}%'),
           const SizedBox(height: 10),
-          Text('参考答案：\n${question.referenceAnswer.isEmpty ? "暂无" : question.referenceAnswer}'),
+          SelectableText('参考答案：\n${question.referenceAnswer.isEmpty ? "暂无" : question.referenceAnswer}'),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -1325,7 +1372,7 @@ class _PracticeTabState extends State<PracticeTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            if (error != null) AppErrorText(error!),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -1381,11 +1428,7 @@ class _PracticeTabState extends State<PracticeTab> {
                 ),
               ),
             ),
-            if (loading)
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: Center(child: CircularProgressIndicator()),
-              ),
+            if (loading) const AppLoadingView(),
             if (!loading && mode == TrainMode.practice && session == null)
               Center(
                 child: FilledButton(
@@ -1490,10 +1533,10 @@ class _PracticeTabState extends State<PracticeTab> {
                         Text('得分：${currentResult.score} / 10'),
                         const SizedBox(height: 8),
                         const Text('解析：', style: TextStyle(fontWeight: FontWeight.w600)),
-                        Text(currentResult.analysis),
+                        SelectableText(currentResult.analysis),
                         const SizedBox(height: 8),
                         const Text('参考答案：', style: TextStyle(fontWeight: FontWeight.w600)),
-                        Text(currentResult.referenceAnswer),
+                        SelectableText(currentResult.referenceAnswer),
                       ],
                     ),
                   ),
@@ -1516,6 +1559,308 @@ class _PracticeTabState extends State<PracticeTab> {
                     ],
                   ),
                 ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PracticeHistoryTab extends StatefulWidget {
+  const PracticeHistoryTab({super.key, required this.api});
+  final ApiClient api;
+
+  @override
+  State<PracticeHistoryTab> createState() => _PracticeHistoryTabState();
+}
+
+class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
+  bool loading = true;
+  String? error;
+  List<PracticeSessionListItem> sessions = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      sessions = await widget.api.fetchPracticeSessions();
+    } catch (e) {
+      error = _formatError(e);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _openSession(int sessionId) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => FutureBuilder<PracticeSessionRecordsResponse>(
+        future: widget.api.fetchPracticeSessionRecords(sessionId),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const AlertDialog(
+              content: SizedBox(height: 120, child: Center(child: CircularProgressIndicator())),
+            );
+          }
+          final data = snapshot.data!;
+          return AlertDialog(
+            title: const Text('刷题详情'),
+            content: SizedBox(
+              width: 720,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('会话：#$sessionId'),
+                    Text('总分：${data.totalScore}/${data.questionCount * 10}'),
+                    Text('时间：${data.completedAt ?? "-"}'),
+                    const SizedBox(height: 10),
+                    ...data.records.map(
+                      (r) => Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('评分：${r.aiScore}/10'),
+                              Text('用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
+                              Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('刷题记录')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (error != null) AppErrorText(error!),
+            if (loading)
+              const AppLoadingView()
+            else if (sessions.isEmpty)
+              const AppEmptyCard('暂无已完成刷题记录')
+            else
+              ...sessions.map(
+                (s) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Card(
+                    child: ListTile(
+                      title: Text('总分：${s.totalScore}/${s.questionCount * 10}'),
+                      subtitle: Text('时间：${s.completedAt ?? "-"}'),
+                      trailing: OutlinedButton(
+                        onPressed: () => _openSession(s.id),
+                        child: const Text('查看详情'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AnswerRecordsTab extends StatefulWidget {
+  const AnswerRecordsTab({super.key, required this.api});
+  final ApiClient api;
+
+  @override
+  State<AnswerRecordsTab> createState() => _AnswerRecordsTabState();
+}
+
+class _AnswerRecordsTabState extends State<AnswerRecordsTab> {
+  bool loading = true;
+  String? error;
+  int total = 0;
+  int page = 1;
+  int pageSize = 25;
+  String shanghaiDate = '';
+  int? expandedId;
+  List<PracticeRecordFeedItem> items = [];
+  final dateController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    dateController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final data = await widget.api.fetchPracticeRecordFeed(
+        page: page,
+        pageSize: pageSize,
+        shanghaiDate: shanghaiDate.isEmpty ? null : shanghaiDate,
+      );
+      total = data.total;
+      items = data.items;
+    } catch (e) {
+      error = _formatError(e);
+      total = 0;
+      items = [];
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalPages = (total / pageSize).ceil().clamp(1, 100000);
+    return Scaffold(
+      appBar: AppBar(title: const Text('答题记录')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Wrap(
+                  runSpacing: 8,
+                  spacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 220,
+                      child: TextField(
+                        controller: dateController,
+                        decoration: const InputDecoration(labelText: '按记录日期筛选（YYYY-MM-DD）'),
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        page = 1;
+                        shanghaiDate = dateController.text.trim();
+                        _load();
+                      },
+                      child: const Text('应用'),
+                    ),
+                    OutlinedButton(
+                      onPressed: () {
+                        dateController.clear();
+                        shanghaiDate = '';
+                        page = 1;
+                        _load();
+                      },
+                      child: const Text('清除日期'),
+                    ),
+                    Text('共 $total 条'),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (error != null) AppErrorText(error!),
+            if (loading)
+              const AppLoadingView()
+            else if (items.isEmpty)
+              const AppEmptyCard('暂无记录')
+            else ...[
+              ...items.map(
+                (r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${r.createdAt} ｜ ${r.sessionId == null ? "每日一题 / 无会话" : "训练会话 #${r.sessionId}"}'),
+                          const SizedBox(height: 4),
+                          Text('题目：${r.questionStem}'),
+                          Text('得分：${r.aiScore}/10'),
+                          const SizedBox(height: 4),
+                          TextButton(
+                            onPressed: () => setState(() => expandedId = expandedId == r.id ? null : r.id),
+                            child: Text(expandedId == r.id ? '收起' : '详情'),
+                          ),
+                          if (expandedId == r.id) ...[
+                            Text('作答：${r.userAnswer.isEmpty ? "（空，可能为跳过）" : r.userAnswer}'),
+                            const SizedBox(height: 4),
+                            Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: page <= 1
+                        ? null
+                        : () {
+                            page -= 1;
+                            _load();
+                          },
+                    child: const Text('上一页'),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('第 $page / $totalPages 页'),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: page >= totalPages
+                        ? null
+                        : () {
+                            page += 1;
+                            _load();
+                          },
+                    child: const Text('下一页'),
+                  ),
+                  const Spacer(),
+                  DropdownButton<int>(
+                    value: pageSize,
+                    items: const [15, 25, 50]
+                        .map((v) => DropdownMenuItem(value: v, child: Text('每页 $v')))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      pageSize = v;
+                      page = 1;
+                      _load();
+                    },
+                  ),
+                ],
               ),
             ],
           ],
@@ -1693,6 +2038,28 @@ class ApiClient {
     _check(res);
     final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
     return list.map((e) => PracticeSessionListItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<PracticeSessionRecordsResponse> fetchPracticeSessionRecords(int sessionId) async {
+    final uri = _uri('/api/practice/sessions/$sessionId/records');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    return PracticeSessionRecordsResponse.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<PracticeRecordFeedPage> fetchPracticeRecordFeed({
+    required int page,
+    required int pageSize,
+    String? shanghaiDate,
+  }) async {
+    final uri = _uri('/api/practice/records', {
+      'page': page,
+      'page_size': pageSize,
+      if (shanghaiDate != null && shanghaiDate.isNotEmpty) 'shanghai_date': shanghaiDate,
+    });
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    return PracticeRecordFeedPage.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeSession> startPracticeSession(String? category, int count) async {
@@ -1994,5 +2361,69 @@ class PracticeSummary {
         totalScore: json['total_score'] as int,
         recordIds: (json['record_ids'] as List<dynamic>? ?? const []).map((e) => e as int).toList(),
         questionCount: json['question_count'] as int? ?? 10,
+      );
+}
+
+class PracticeSessionRecordsResponse {
+  PracticeSessionRecordsResponse({
+    required this.totalScore,
+    required this.questionCount,
+    required this.completedAt,
+    required this.records,
+  });
+  final int totalScore;
+  final int questionCount;
+  final String? completedAt;
+  final List<PracticeRecordItem> records;
+
+  factory PracticeSessionRecordsResponse.fromJson(Map<String, dynamic> json) => PracticeSessionRecordsResponse(
+        totalScore: json['total_score'] as int? ?? 0,
+        questionCount: json['question_count'] as int? ?? 10,
+        completedAt: json['completed_at'] as String?,
+        records: (json['records'] as List<dynamic>? ?? const [])
+            .map((e) => PracticeRecordItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class PracticeRecordFeedItem {
+  PracticeRecordFeedItem({
+    required this.id,
+    required this.sessionId,
+    required this.questionStem,
+    required this.userAnswer,
+    required this.aiAnswer,
+    required this.aiScore,
+    required this.createdAt,
+  });
+  final int id;
+  final int? sessionId;
+  final String questionStem;
+  final String userAnswer;
+  final String aiAnswer;
+  final int aiScore;
+  final String createdAt;
+
+  factory PracticeRecordFeedItem.fromJson(Map<String, dynamic> json) => PracticeRecordFeedItem(
+        id: json['id'] as int? ?? 0,
+        sessionId: json['session_id'] as int?,
+        questionStem: json['question_stem'] as String? ?? '',
+        userAnswer: json['user_answer'] as String? ?? '',
+        aiAnswer: json['ai_answer'] as String? ?? '',
+        aiScore: json['ai_score'] as int? ?? 0,
+        createdAt: json['created_at'] as String? ?? '',
+      );
+}
+
+class PracticeRecordFeedPage {
+  PracticeRecordFeedPage({required this.total, required this.items});
+  final int total;
+  final List<PracticeRecordFeedItem> items;
+
+  factory PracticeRecordFeedPage.fromJson(Map<String, dynamic> json) => PracticeRecordFeedPage(
+        total: json['total'] as int? ?? 0,
+        items: (json['items'] as List<dynamic>? ?? const [])
+            .map((e) => PracticeRecordFeedItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
