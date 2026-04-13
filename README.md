@@ -62,6 +62,21 @@ flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:8000
 - Android 模拟器访问宿主机后端请使用 `10.0.2.2`，不要用 `localhost`。
 - 若用真机调试，请把 `API_BASE_URL` 改成你电脑在局域网的 IP，例如 `http://192.168.1.10:8000`。
 
+### 仅用浏览器调试 Flutter（推荐联调样式时使用）
+
+```bash
+cd flutterend
+flutter pub get
+flutter run -d chrome --web-hostname localhost --web-port 7357 --dart-define=API_BASE_URL=http://localhost:8000
+```
+
+- 打开后会自动在浏览器访问 Flutter Web。
+- 若你只想固定本地 URL 供反复刷新，也可以改用：
+
+```bash
+flutter run -d web-server --web-hostname localhost --web-port 7357 --dart-define=API_BASE_URL=http://localhost:8000
+```
+
 ### 打开与验证
 
 - 前端：<http://localhost:5173>（具体端口以 Vite 终端输出为准）

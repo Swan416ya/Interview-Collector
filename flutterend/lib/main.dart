@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flex_color_scheme/flex_color_scheme.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -132,11 +133,45 @@ class _HomeTabState extends State<HomeTab> {
   bool loading = true;
   String? error;
   int total = 0;
+  List<PracticeActivityDay> activityDays = [];
+  String activityToday = '';
+  int activityTotalQuestions = 0;
+  int activityDaysCount = 0;
+  List<PracticeSessionListItem> sessions = [];
+  QuestionItem? dailyQuestion;
+  int dailyQuestionRank = 0;
+  int? dailyDoneScore;
+
+  final dailyAnswerController = TextEditingController();
+  bool dailySubmitting = false;
+  PracticeSubmitResult? dailyResult;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    dailyAnswerController.dispose();
+    super.dispose();
+  }
+
+  int _fnv1a(String input) {
+    var h = 2166136261;
+    for (final c in input.codeUnits) {
+      h ^= c;
+      h = (h * 16777619) & 0xffffffff;
+    }
+    return h & 0x7fffffff;
+  }
+
+  String _todayKey() {
+    final d = DateTime.now();
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$m-$day';
   }
 
   Future<void> _load() async {
@@ -145,15 +180,122 @@ class _HomeTabState extends State<HomeTab> {
       error = null;
     });
     try {
-      final page = await widget.api.fetchQuestionsPage(page: 1, pageSize: 1);
+      final futures = await Future.wait([
+        widget.api.fetchQuestions(sortBy: 'id', sortOrder: 'asc'),
+        widget.api.fetchPracticeActivity(),
+        widget.api.fetchPracticeSessions(),
+      ]);
+      final allQuestions = futures[0] as List<QuestionItem>;
+      final activity = futures[1] as PracticeActivityResponse;
+      final sessionList = futures[2] as List<PracticeSessionListItem>;
+      final today = _todayKey();
+      QuestionItem? picked;
+      var pickedRank = 0;
+      int? doneScore;
+      if (allQuestions.isNotEmpty) {
+        pickedRank = _fnv1a('$today|daily-v1') % allQuestions.length;
+        picked = allQuestions[pickedRank];
+        final records = await widget.api.fetchQuestionRecords(picked.id);
+        final todayRecord = records.where((r) => r.createdAt.startsWith(today)).toList();
+        if (todayRecord.isNotEmpty) doneScore = todayRecord.first.aiScore;
+      }
       if (!mounted) return;
-      setState(() => total = page.total);
+      setState(() {
+        total = allQuestions.length;
+        activityDays = activity.days;
+        activityToday = activity.today;
+        activityTotalQuestions = activity.totalQuestions;
+        activityDaysCount = activity.activeDays;
+        sessions = sessionList;
+        dailyQuestion = picked;
+        dailyQuestionRank = pickedRank;
+        dailyDoneScore = doneScore;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  Color _heatColor(int level) {
+    if (level <= 0) return const Color(0xFFEBEDF0);
+    if (level == 1) return const Color(0xFF9BE9A8);
+    if (level == 2) return const Color(0xFF40C463);
+    if (level == 3) return const Color(0xFF30A14E);
+    return const Color(0xFF216E39);
+  }
+
+  List<List<PracticeActivityDay>> _weekColumns() {
+    final cols = <List<PracticeActivityDay>>[];
+    for (var i = 0; i < activityDays.length; i += 7) {
+      cols.add(activityDays.skip(i).take(7).toList());
+    }
+    return cols;
+  }
+
+  Future<void> _openDailyDialog() async {
+    if (dailyQuestion == null) return;
+    dailyAnswerController.clear();
+    dailyResult = null;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => AlertDialog(
+          title: const Text('每日一题作答'),
+          content: SizedBox(
+            width: 680,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('题目：${dailyQuestion!.stem}'),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: dailyAnswerController,
+                    minLines: 5,
+                    maxLines: 8,
+                    decoration: const InputDecoration(labelText: '输入你的答案'),
+                  ),
+                  if (dailyResult != null) ...[
+                    const SizedBox(height: 10),
+                    Text('得分：${dailyResult!.score} / 10'),
+                    const SizedBox(height: 6),
+                    Text('解析：\n${dailyResult!.analysis}'),
+                    const SizedBox(height: 6),
+                    Text('参考答案：\n${dailyResult!.referenceAnswer}'),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+            FilledButton(
+              onPressed: dailySubmitting
+                  ? null
+                  : () async {
+                      if (dailyAnswerController.text.trim().isEmpty) return;
+                      setSheetState(() => dailySubmitting = true);
+                      try {
+                        final result = await widget.api.submitDailyPracticeAnswer(
+                          dailyQuestion!.id,
+                          dailyAnswerController.text.trim(),
+                        );
+                        dailyResult = result;
+                        dailyDoneScore = result.score;
+                      } finally {
+                        if (context.mounted) setSheetState(() => dailySubmitting = false);
+                      }
+                    },
+              child: Text(dailySubmitting ? '判题中...' : '提交并判题'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   @override
@@ -192,9 +334,122 @@ class _HomeTabState extends State<HomeTab> {
                 runSpacing: 12,
                 children: [
                   _StatCard(title: '题目总数', value: '$total'),
-                  const _StatCard(title: '当前阶段', value: '本地联调'),
+                  _StatCard(title: '近53周总记录', value: '$activityTotalQuestions'),
+                  _StatCard(title: '活跃天数', value: '$activityDaysCount'),
                 ],
               ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('做题热力图', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: _weekColumns()
+                            .map(
+                              (col) => Padding(
+                                padding: const EdgeInsets.only(right: 3),
+                                child: Column(
+                                  children: col
+                                      .map(
+                                        (cell) => Container(
+                                          width: 10,
+                                          height: 10,
+                                          margin: const EdgeInsets.only(bottom: 3),
+                                          decoration: BoxDecoration(
+                                            color: cell.date.compareTo(activityToday) > 0 ? const Color(0xFFEBEDF0) : _heatColor(cell.level),
+                                            borderRadius: BorderRadius.circular(2),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('刷题得分率趋势', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    if (sessions.isEmpty)
+                      const Text('暂无已完成刷题记录')
+                    else
+                      SizedBox(
+                        height: 220,
+                        child: LineChart(
+                          LineChartData(
+                            minY: 0,
+                            maxY: 100,
+                            titlesData: const FlTitlesData(
+                              topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                            ),
+                            lineBarsData: [
+                              LineChartBarData(
+                                spots: List.generate(sessions.length, (i) {
+                                  final s = sessions[i];
+                                  final max = (s.questionCount) * 10;
+                                  final pct = max <= 0 ? 0.0 : (s.totalScore * 100.0 / max);
+                                  return FlSpot(i.toDouble(), pct);
+                                }),
+                                isCurved: true,
+                                color: const Color(0xFF6D4DFF),
+                                dotData: const FlDotData(show: true),
+                                belowBarData: BarAreaData(show: true, color: const Color(0x336D4DFF)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('每日一题', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    if (dailyQuestion == null)
+                      const Text('暂无题目，请先导入或新增题目。')
+                    else ...[
+                      Text('今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题 / 共 $total 题'),
+                      const SizedBox(height: 6),
+                      Text(dailyQuestion!.stem),
+                      const SizedBox(height: 6),
+                      Text('分类：${dailyQuestion!.category} ｜ 难度：${dailyQuestion!.difficulty} ｜ 当前掌握：${dailyQuestion!.masteryScore}%'),
+                      if (dailyDoneScore != null) ...[
+                        const SizedBox(height: 6),
+                        Text('今日已完成（$dailyDoneScore/10）', style: const TextStyle(color: Color(0xFF1E7F3B))),
+                      ],
+                      const SizedBox(height: 8),
+                      FilledButton(onPressed: _openDailyDialog, child: const Text('做题')),
+                    ],
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 16),
             const Card(
               color: Color(0xFFEFEBFF),
@@ -258,11 +513,53 @@ class _QuestionsTabState extends State<QuestionsTab> {
   bool loading = true;
   String? error;
   List<QuestionItem> questions = [];
+  List<String> categoryOptions = [];
+  int total = 0;
+  int page = 1;
+  int pageSize = 20;
+  String category = '';
+  String categoryKeyword = '';
+  int? difficulty;
+  String sortMode = 'recent_desc';
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadBootstrap();
+  }
+
+  Future<void> _loadBootstrap() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final cats = await widget.api.fetchCategoryNames();
+      categoryOptions = cats;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = _formatError(e));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  ({String sortBy, String sortOrder}) _sortParams() {
+    switch (sortMode) {
+      case 'created_asc':
+        return (sortBy: 'created_at', sortOrder: 'asc');
+      case 'mastery_desc':
+        return (sortBy: 'mastery_score', sortOrder: 'desc');
+      case 'mastery_asc':
+        return (sortBy: 'mastery_score', sortOrder: 'asc');
+      case 'recent_asc':
+        return (sortBy: 'recent_encountered', sortOrder: 'asc');
+      case 'recent_desc':
+        return (sortBy: 'recent_encountered', sortOrder: 'desc');
+      default:
+        return (sortBy: 'created_at', sortOrder: 'desc');
+    }
   }
 
   Future<void> _load() async {
@@ -271,15 +568,40 @@ class _QuestionsTabState extends State<QuestionsTab> {
       error = null;
     });
     try {
-      final page = await widget.api.fetchQuestionsPage(page: 1, pageSize: 50);
+      final sort = _sortParams();
+      final pageData = await widget.api.fetchQuestionsPage(
+        page: page,
+        pageSize: pageSize,
+        category: category.trim().isEmpty ? null : category.trim(),
+        difficulty: difficulty,
+        sortBy: sort.sortBy,
+        sortOrder: sort.sortOrder,
+      );
       if (!mounted) return;
-      setState(() => questions = page.items);
+      setState(() {
+        questions = pageData.items;
+        total = pageData.total;
+        page = pageData.page;
+        pageSize = pageData.pageSize;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  Future<void> _changePage(int nextPage) async {
+    final totalPages = (total / pageSize).ceil().clamp(1, 100000);
+    page = nextPage.clamp(1, totalPages);
+    await _load();
+  }
+
+  List<String> get filteredCategoryOptions {
+    final key = categoryKeyword.trim();
+    if (key.isEmpty) return categoryOptions;
+    return categoryOptions.where((c) => c.toLowerCase().contains(key.toLowerCase())).toList();
   }
 
   Future<void> _openCreateSheet() async {
@@ -341,6 +663,7 @@ class _QuestionsTabState extends State<QuestionsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final totalPages = (total / pageSize).ceil().clamp(1, 100000);
     return Scaffold(
       appBar: AppBar(title: const Text('题库')),
       floatingActionButton: FloatingActionButton.extended(
@@ -350,24 +673,411 @@ class _QuestionsTabState extends State<QuestionsTab> {
       ),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: loading
-            ? const Center(child: CircularProgressIndicator())
-            : error != null
-                ? ListView(children: [Padding(padding: const EdgeInsets.all(16), child: Text(error!))])
-                : ListView.separated(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: questions.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final q = questions[index];
-                      return Card(
-                        child: ListTile(
-                          title: Text(q.stem),
-                          subtitle: Text('${q.category} · 难度 ${q.difficulty} · 掌握度 ${q.masteryScore}'),
+        child: ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('筛选'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      decoration: const InputDecoration(labelText: '分类查找（关键词）'),
+                      onChanged: (v) => setState(() => categoryKeyword = v),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: category.isEmpty ? '' : category,
+                      items: [
+                        const DropdownMenuItem(value: '', child: Text('全部分类')),
+                        ...filteredCategoryOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))),
+                      ],
+                      onChanged: (v) => setState(() => category = v ?? ''),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<int?>(
+                      value: difficulty,
+                      items: const [
+                        DropdownMenuItem<int?>(value: null, child: Text('全部难度')),
+                        DropdownMenuItem<int?>(value: 1, child: Text('难度 1')),
+                        DropdownMenuItem<int?>(value: 2, child: Text('难度 2')),
+                        DropdownMenuItem<int?>(value: 3, child: Text('难度 3')),
+                        DropdownMenuItem<int?>(value: 4, child: Text('难度 4')),
+                        DropdownMenuItem<int?>(value: 5, child: Text('难度 5')),
+                      ],
+                      onChanged: (v) => setState(() => difficulty = v),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: sortMode,
+                      items: const [
+                        DropdownMenuItem(value: 'recent_desc', child: Text('最近遇到：近到远（默认）')),
+                        DropdownMenuItem(value: 'recent_asc', child: Text('最近遇到：远到近')),
+                        DropdownMenuItem(value: 'created_desc', child: Text('入库时间：新到旧')),
+                        DropdownMenuItem(value: 'created_asc', child: Text('入库时间：旧到新')),
+                        DropdownMenuItem(value: 'mastery_desc', child: Text('掌握度：高到低')),
+                        DropdownMenuItem(value: 'mastery_asc', child: Text('掌握度：低到高')),
+                      ],
+                      onChanged: (v) => setState(() => sortMode = v ?? 'recent_desc'),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        FilledButton(
+                          onPressed: () {
+                            page = 1;
+                            _load();
+                          },
+                          child: const Text('刷新'),
                         ),
-                      );
-                    },
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () {
+                            setState(() {
+                              category = '';
+                              difficulty = null;
+                              sortMode = 'recent_desc';
+                              page = 1;
+                            });
+                            _load();
+                          },
+                          child: const Text('重置'),
+                        ),
+                        const Spacer(),
+                        DropdownButton<int>(
+                          value: pageSize,
+                          items: const [10, 20, 50, 100]
+                              .map((v) => DropdownMenuItem(value: v, child: Text('每页 $v')))
+                              .toList(),
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setState(() {
+                              pageSize = v;
+                              page = 1;
+                            });
+                            _load();
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (loading)
+              const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+            else if (error != null)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              )
+            else ...[
+              Text('当前页题数：${questions.length} / 总题数：$total'),
+              const SizedBox(height: 8),
+              ...questions.map(
+                (q) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Card(
+                    child: ListTile(
+                      title: Text(q.stem),
+                      subtitle: Text('分类：${q.category} ｜ 难度：${q.difficultyStars} ｜ 完成度：${q.masteryScore}%'),
+                      trailing: OutlinedButton(
+                        onPressed: () async {
+                          final changed = await Navigator.of(context).push<bool>(
+                            MaterialPageRoute(
+                              builder: (_) => QuestionDetailPage(
+                                api: widget.api,
+                                question: q,
+                                categoryOptions: categoryOptions,
+                              ),
+                            ),
+                          );
+                          if (changed == true) {
+                            await _load();
+                          }
+                        },
+                        child: const Text('查看与操作'),
+                      ),
+                    ),
                   ),
+                ),
+              ),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: page <= 1 ? null : () => _changePage(page - 1),
+                    child: const Text('上一页'),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('第 $page / $totalPages 页'),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: page >= totalPages ? null : () => _changePage(page + 1),
+                    child: const Text('下一页'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class QuestionDetailPage extends StatefulWidget {
+  const QuestionDetailPage({
+    super.key,
+    required this.api,
+    required this.question,
+    required this.categoryOptions,
+  });
+  final ApiClient api;
+  final QuestionItem question;
+  final List<String> categoryOptions;
+
+  @override
+  State<QuestionDetailPage> createState() => _QuestionDetailPageState();
+}
+
+class _QuestionDetailPageState extends State<QuestionDetailPage> {
+  late QuestionItem question;
+  List<PracticeRecordItem> records = [];
+  bool recordsLoading = true;
+  bool editMode = false;
+  bool refreshingReference = false;
+  bool singleSubmitting = false;
+  String? singleResult;
+  final singleAnswerController = TextEditingController();
+  final editStemController = TextEditingController();
+  final editCategoryController = TextEditingController();
+  int editDifficulty = 3;
+  bool changed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    question = widget.question;
+    editStemController.text = question.stem;
+    editCategoryController.text = question.category;
+    editDifficulty = question.difficulty;
+    _loadRecords();
+  }
+
+  @override
+  void dispose() {
+    singleAnswerController.dispose();
+    editStemController.dispose();
+    editCategoryController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRecords() async {
+    setState(() => recordsLoading = true);
+    try {
+      records = await widget.api.fetchQuestionRecords(question.id);
+    } finally {
+      if (mounted) setState(() => recordsLoading = false);
+    }
+  }
+
+  List<FlSpot> _buildSpots() {
+    final sorted = [...records]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return List.generate(sorted.length, (i) => FlSpot(i.toDouble(), sorted[i].aiScore.toDouble()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final spots = _buildSpots();
+    return Scaffold(
+      appBar: AppBar(title: const Text('题目详情与操作')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(question.stem, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text('分类：${question.category} ｜ 难度：${question.difficulty} ｜ 掌握度：${question.masteryScore}%'),
+          const SizedBox(height: 10),
+          Text('参考答案：\n${question.referenceAnswer.isEmpty ? "暂无" : question.referenceAnswer}'),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                onPressed: () => setState(() => editMode = !editMode),
+                child: Text(editMode ? '取消编辑' : '编辑题目'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('确认删除'),
+                      content: const Text('确认删除这道题吗？'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
+                      ],
+                    ),
+                  );
+                  if (ok != true) return;
+                  await widget.api.deleteQuestion(question.id);
+                  if (!context.mounted) return;
+                  Navigator.of(context).pop(true);
+                },
+                child: const Text('删除题目'),
+              ),
+              OutlinedButton(
+                onPressed: refreshingReference
+                    ? null
+                    : () async {
+                        setState(() => refreshingReference = true);
+                        try {
+                          question = await widget.api.refreshQuestionReference(question.id);
+                          changed = true;
+                          editStemController.text = question.stem;
+                          editCategoryController.text = question.category;
+                          editDifficulty = question.difficulty;
+                        } finally {
+                          if (mounted) setState(() => refreshingReference = false);
+                        }
+                      },
+                child: Text(refreshingReference ? '刷新中...' : '仅刷新参考答案'),
+              ),
+              OutlinedButton(onPressed: _loadRecords, child: const Text('刷新做题记录')),
+            ],
+          ),
+          if (editMode) ...[
+            const SizedBox(height: 12),
+            TextField(controller: editStemController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: '题干')),
+            const SizedBox(height: 8),
+            TextField(controller: editCategoryController, decoration: const InputDecoration(labelText: '分类')),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              value: editDifficulty,
+              decoration: const InputDecoration(labelText: '难度'),
+              items: [1, 2, 3, 4, 5].map((v) => DropdownMenuItem(value: v, child: Text('难度 $v'))).toList(),
+              onChanged: (v) => setState(() => editDifficulty = v ?? 3),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: () async {
+                if (editStemController.text.trim().length < 3) return;
+                question = await widget.api.updateQuestion(
+                  question.id,
+                  stem: editStemController.text.trim(),
+                  category: editCategoryController.text.trim().isEmpty ? '未分类' : editCategoryController.text.trim(),
+                  difficulty: editDifficulty,
+                );
+                changed = true;
+                if (!mounted) return;
+                setState(() => editMode = false);
+              },
+              child: const Text('保存编辑'),
+            ),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            controller: singleAnswerController,
+            minLines: 3,
+            maxLines: 5,
+            decoration: const InputDecoration(labelText: '单题独立判题 - 你的答案'),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: singleSubmitting
+                ? null
+                : () async {
+                    if (singleAnswerController.text.trim().isEmpty) return;
+                    setState(() => singleSubmitting = true);
+                    try {
+                      final data = await widget.api.submitDailyPracticeAnswer(
+                        question.id,
+                        singleAnswerController.text.trim(),
+                      );
+                      singleResult = '得分：${data.score}/10\n\n解析：\n${data.analysis}\n\n参考答案：\n${data.referenceAnswer}';
+                      await _loadRecords();
+                      changed = true;
+                    } finally {
+                      if (mounted) setState(() => singleSubmitting = false);
+                    }
+                  },
+            child: Text(singleSubmitting ? '判题中...' : '提交并判题'),
+          ),
+          if (singleResult != null) ...[
+            const SizedBox(height: 8),
+            Card(child: Padding(padding: const EdgeInsets.all(12), child: Text(singleResult!))),
+          ],
+          const SizedBox(height: 14),
+          Text('历次得分趋势', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (spots.length < 2)
+            const Text('做题记录不足，暂无趋势图')
+          else
+            SizedBox(
+              height: 220,
+              child: LineChart(
+                LineChartData(
+                  minY: 0,
+                  maxY: 10,
+                  gridData: const FlGridData(show: true),
+                  titlesData: const FlTitlesData(
+                    topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  ),
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: spots,
+                      isCurved: true,
+                      dotData: const FlDotData(show: true),
+                      color: const Color(0xFF6D4DFF),
+                      belowBarData: BarAreaData(
+                        show: true,
+                        color: const Color(0x336D4DFF),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 14),
+          Text('做题记录', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (recordsLoading)
+            const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
+          else if (records.isEmpty)
+            const Text('暂无做题记录')
+          else
+            ...records.map(
+              (r) => Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('评分：${r.aiScore}/10'),
+                      const SizedBox(height: 4),
+                      Text('用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
+                      const SizedBox(height: 4),
+                      Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                      const SizedBox(height: 4),
+                      Text('时间：${r.createdAt}'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(height: 18),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, changed),
+            child: const Text('返回题库'),
+          ),
+        ],
       ),
     );
   }
@@ -381,17 +1091,29 @@ class PracticeTab extends StatefulWidget {
   State<PracticeTab> createState() => _PracticeTabState();
 }
 
+enum TrainMode { practice, memorize }
+
 class _PracticeTabState extends State<PracticeTab> {
+  static const List<int> sessionSizes = [5, 10, 15];
+
   final answerController = TextEditingController();
   bool loading = false;
   String? error;
+  TrainMode mode = TrainMode.practice;
+
   List<PracticeCategory> categories = [];
-  String? selectedCategory;
-  int selectedCount = 5;
+  int totalQuestionsAll = 0;
+  String selectedCategory = '';
+  int selectedCount = 10;
+
   PracticeSession? session;
   int currentIndex = 0;
-  String? latestAnalysis;
-  String? latestReference;
+  PracticeSummary? summary;
+  final Map<int, PracticeSubmitResult> perQuestionResult = {};
+
+  List<QuestionItem> memorizeQuestions = [];
+  int memorizeIndex = 0;
+  bool memorizePrepared = false;
 
   @override
   void initState() {
@@ -410,28 +1132,103 @@ class _PracticeTabState extends State<PracticeTab> {
     try {
       final data = await widget.api.fetchPracticeCategories();
       if (!mounted) return;
-      setState(() => categories = data);
+      setState(() {
+        categories = data;
+        totalQuestionsAll = data.fold(0, (sum, item) => sum + item.totalQuestions);
+        if (selectedCategory.isEmpty) {
+          final firstOk = data.where((e) => e.totalQuestions >= selectedCount).toList();
+          selectedCategory = firstOk.isNotEmpty ? firstOk.first.category : '';
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  bool get canStartPractice {
+    if (selectedCategory.isEmpty) return totalQuestionsAll >= selectedCount;
+    final hit = categories.where((c) => c.category == selectedCategory).toList();
+    return hit.isNotEmpty && hit.first.totalQuestions >= selectedCount;
+  }
+
+  bool get canStartMemorize {
+    if (selectedCategory.isEmpty) return false;
+    final hit = categories.where((c) => c.category == selectedCategory).toList();
+    return hit.isNotEmpty && hit.first.totalQuestions >= selectedCount;
+  }
+
+  QuestionItem? get currentQuestion =>
+      session == null || currentIndex >= session!.questions.length ? null : session!.questions[currentIndex];
+
+  QuestionItem? get currentMemorizeQuestion =>
+      memorizeIndex >= memorizeQuestions.length ? null : memorizeQuestions[memorizeIndex];
+
+  bool get finished => session != null && currentIndex >= session!.questions.length && session!.questions.isNotEmpty;
+
+  void _clearPracticeState() {
+    session = null;
+    currentIndex = 0;
+    summary = null;
+    answerController.clear();
+    perQuestionResult.clear();
   }
 
   Future<void> _startSession() async {
+    if (!canStartPractice) {
+      setState(() {
+        error = selectedCategory.isNotEmpty
+            ? '该分类题目不足 $selectedCount 道，请换分类或减小题量'
+            : '全库题目不足 $selectedCount 道，请减小题量或先导入题目';
+      });
+      return;
+    }
     setState(() {
       loading = true;
       error = null;
+      _clearPracticeState();
     });
     try {
-      final data = await widget.api.startPracticeSession(selectedCategory, selectedCount);
+      final data = await widget.api.startPracticeSession(
+        selectedCategory.isEmpty ? null : selectedCategory,
+        selectedCount,
+      );
+      if (!mounted) return;
+      setState(() => session = data);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = _formatError(e));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _prepareMemorize() async {
+    if (!canStartMemorize) {
+      setState(() => error = '背题模式需要选择具体分类，且题量不少于 $selectedCount');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+      _clearPracticeState();
+      memorizePrepared = false;
+      memorizeQuestions = [];
+      memorizeIndex = 0;
+    });
+    try {
+      final pool = await widget.api.fetchQuestions(category: selectedCategory);
+      if (pool.length < selectedCount) {
+        setState(() => error = '该分类不足 $selectedCount 题，无法进入背题模式');
+        return;
+      }
+      pool.shuffle();
       if (!mounted) return;
       setState(() {
-        session = data;
-        currentIndex = 0;
-        latestAnalysis = null;
-        latestReference = null;
+        memorizeQuestions = pool.take(selectedCount).toList();
+        memorizePrepared = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -441,48 +1238,86 @@ class _PracticeTabState extends State<PracticeTab> {
     }
   }
 
-  Future<void> _submitCurrent({required bool skip}) async {
-    final current = session?.questions[currentIndex];
-    if (current == null) return;
-    if (!skip && answerController.text.trim().isEmpty) return;
-    setState(() => loading = true);
+  Future<void> _startQuizFromMemorize() async {
+    if (memorizeQuestions.length != selectedCount) return;
+    setState(() {
+      loading = true;
+      error = null;
+      _clearPracticeState();
+    });
     try {
-      final result = skip
-          ? await widget.api.skipPracticeAnswer(session!.sessionId, current.id)
-          : await widget.api.submitPracticeAnswer(
-              session!.sessionId,
-              current.id,
-              answerController.text.trim(),
-            );
+      final ids = memorizeQuestions.map((e) => e.id).toList()..shuffle();
+      final data = await widget.api.startPracticeSessionCustom(ids);
       if (!mounted) return;
       setState(() {
-        latestAnalysis = result.analysis;
-        latestReference = result.referenceAnswer;
-        answerController.clear();
-        if (currentIndex + 1 < session!.questions.length) {
-          currentIndex += 1;
-        }
+        mode = TrainMode.practice;
+        session = data;
       });
-      final done = currentIndex + 1 >= session!.questions.length;
-      if (done) {
-        final summary = await widget.api.fetchPracticeSummary(session!.sessionId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('本轮完成，总分 ${summary.totalScore}')),
-        );
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _submitCurrent() async {
+    final current = currentQuestion;
+    if (current == null) return;
+    if (answerController.text.trim().isEmpty) {
+      setState(() => error = '请先填写答案');
+      return;
+    }
+    setState(() => loading = true);
+    try {
+      final result = await widget.api.submitPracticeAnswer(
+        session!.sessionId,
+        current.id,
+        answerController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() => perQuestionResult[current.id] = result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = _formatError(e));
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _nextQuestion() async {
+    final current = currentQuestion;
+    if (current == null) return;
+    if (!perQuestionResult.containsKey(current.id)) {
+      setState(() => loading = true);
+      try {
+        final data = await widget.api.skipPracticeAnswer(session!.sessionId, current.id);
+        perQuestionResult[current.id] = data;
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => error = _formatError(e));
+        return;
+      } finally {
+        if (mounted) setState(() => loading = false);
+      }
+    }
+    setState(() {
+      currentIndex += 1;
+      answerController.clear();
+      error = null;
+    });
+    if (finished) {
+      final s = await widget.api.fetchPracticeSummary(session!.sessionId);
+      if (!mounted) return;
+      setState(() => summary = s);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final current = session == null ? null : session!.questions[currentIndex];
-    final sessionActive = session != null;
+    final current = currentQuestion;
+    final currentResult = current == null ? null : perQuestionResult[current.id];
+    final maxScore = (summary?.questionCount ?? session?.questions.length ?? 10) * 10;
     return Scaffold(
       appBar: AppBar(title: const Text('练习')),
       body: RefreshIndicator(
@@ -491,50 +1326,131 @@ class _PracticeTabState extends State<PracticeTab> {
           padding: const EdgeInsets.all(16),
           children: [
             if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            if (!sessionActive) ...[
-              const Text('选择练习参数', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: categories
-                    .where((c) => c.selectable)
-                    .map(
-                      (c) => ChoiceChip(
-                        label: Text('${c.category} (${c.totalQuestions})'),
-                        selected: selectedCategory == c.category,
-                        backgroundColor: Colors.white,
-                        selectedColor: const Color(0xFFE3DAFF),
-                        onSelected: (_) => setState(() {
-                          selectedCategory = selectedCategory == c.category ? null : c.category;
-                        }),
-                      ),
-                    )
-                    .toList(),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        FilledButton(
+                          onPressed: mode == TrainMode.practice ? null : () => setState(() => mode = TrainMode.practice),
+                          child: const Text('刷题模式'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: mode == TrainMode.memorize ? null : () => setState(() => mode = TrainMode.memorize),
+                          child: const Text('背题模式'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      children: sessionSizes
+                          .map(
+                            (n) => ChoiceChip(
+                              label: Text('$n 题'),
+                              selected: selectedCount == n,
+                              onSelected: (_) => setState(() => selectedCount = n),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategory,
+                      items: [
+                        if (mode == TrainMode.practice) const DropdownMenuItem(value: '', child: Text('全部分类随机')),
+                        ...categories.map(
+                          (item) => DropdownMenuItem(
+                            value: item.category,
+                            enabled: item.totalQuestions >= selectedCount,
+                            child: Text(
+                              '${item.category}（${item.totalQuestions}题）${item.totalQuestions < selectedCount ? ' — 不足$selectedCount题' : ''}',
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() => selectedCategory = v ?? ''),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(onPressed: _loadCategories, child: const Text('刷新分类')),
+                  ],
+                ),
               ),
+            ),
+            if (loading)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (!loading && mode == TrainMode.practice && session == null)
+              Center(
+                child: FilledButton(
+                  onPressed: canStartPractice ? _startSession : null,
+                  child: Text('开始刷题（$selectedCount 题）'),
+                ),
+              ),
+            if (!loading && mode == TrainMode.memorize && !memorizePrepared)
+              Center(
+                child: FilledButton(
+                  onPressed: canStartMemorize ? _prepareMemorize : null,
+                  child: Text('开始背题（$selectedCount 题）'),
+                ),
+              ),
+            if (mode == TrainMode.memorize && memorizePrepared && memorizeIndex < memorizeQuestions.length) ...[
               const SizedBox(height: 12),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 5, label: Text('5 题')),
-                  ButtonSegment(value: 10, label: Text('10 题')),
-                  ButtonSegment(value: 15, label: Text('15 题')),
-                ],
-                selected: {selectedCount},
-                onSelectionChanged: (v) => setState(() => selectedCount = v.first),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('背题进度：第 ${memorizeIndex + 1} / ${memorizeQuestions.length} 题'),
+                      const SizedBox(height: 8),
+                      Text(currentMemorizeQuestion?.stem ?? ''),
+                      const SizedBox(height: 8),
+                      Text('参考答案：\n${currentMemorizeQuestion?.referenceAnswer.isEmpty ?? true ? "暂无参考答案" : currentMemorizeQuestion!.referenceAnswer}'),
+                      const SizedBox(height: 10),
+                      FilledButton(
+                        onPressed: () => setState(() => memorizeIndex += 1),
+                        child: const Text('下一题'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: loading ? null : _startSession,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('开始练习'),
+            ],
+            if (mode == TrainMode.memorize &&
+                memorizePrepared &&
+                memorizeIndex >= memorizeQuestions.length &&
+                memorizeQuestions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('背题完成'),
+                      const SizedBox(height: 8),
+                      Text('将进入刷题模式，对刚才这 ${memorizeQuestions.length} 题进行乱序测验。'),
+                      const SizedBox(height: 8),
+                      FilledButton(onPressed: _startQuizFromMemorize, child: const Text('开始测验')),
+                    ],
+                  ),
+                ),
               ),
-            ] else ...[
+            ],
+            if (current != null && !finished) ...[
               Text('第 ${currentIndex + 1}/${session!.questions.length} 题', style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 8),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
-                  child: Text(current!.stem),
+                  child: Text(current.stem),
                 ),
               ),
               const SizedBox(height: 10),
@@ -550,21 +1466,41 @@ class _PracticeTabState extends State<PracticeTab> {
                 children: [
                   Expanded(
                     child: FilledButton(
-                      onPressed: loading ? null : () => _submitCurrent(skip: false),
-                      child: const Text('提交'),
+                      onPressed: loading ? null : _submitCurrent,
+                      child: Text(loading ? '判题中...' : '提交并判题'),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: loading ? null : () => _submitCurrent(skip: true),
-                      child: const Text('跳过'),
+                      onPressed: loading ? null : _nextQuestion,
+                      child: const Text('下一题'),
                     ),
                   ),
                 ],
               ),
+              if (currentResult != null) ...[
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('得分：${currentResult.score} / 10'),
+                        const SizedBox(height: 8),
+                        const Text('解析：', style: TextStyle(fontWeight: FontWeight.w600)),
+                        Text(currentResult.analysis),
+                        const SizedBox(height: 8),
+                        const Text('参考答案：', style: TextStyle(fontWeight: FontWeight.w600)),
+                        Text(currentResult.referenceAnswer),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
-            if (latestAnalysis != null) ...[
+            if (finished && summary != null) ...[
               const SizedBox(height: 16),
               Card(
                 child: Padding(
@@ -572,13 +1508,11 @@ class _PracticeTabState extends State<PracticeTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('AI 评语', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text('本轮完成', style: TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 8),
-                      Text(latestAnalysis!),
-                      const SizedBox(height: 12),
-                      const Text('参考答案', style: TextStyle(fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 8),
-                      Text(latestReference ?? ''),
+                      Text('总分：${summary!.totalScore} / $maxScore'),
+                      Text('记录ID：${summary!.recordIds.join(", ")}'),
+                      Text('会话ID：${summary!.sessionId}'),
                     ],
                   ),
                 ),
@@ -615,21 +1549,39 @@ class ApiClient {
     }
   }
 
-  Future<List<QuestionItem>> fetchQuestions() async {
-    final uri = _uri('/api/questions');
+  Future<List<QuestionItem>> fetchQuestions({
+    String? category,
+    String sortBy = 'created_at',
+    String sortOrder = 'desc',
+  }) async {
+    final uri = _uri('/api/questions', {
+      if (category != null && category.isNotEmpty) 'category': category,
+      'sort_by': sortBy,
+      'sort_order': sortOrder,
+    });
     final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final jsonList = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
     return jsonList.map((e) => QuestionItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<QuestionPage> fetchQuestionsPage({required int page, required int pageSize}) async {
-    final uri = _uri('/api/questions/page', {
+  Future<QuestionPage> fetchQuestionsPage({
+    required int page,
+    required int pageSize,
+    String? category,
+    int? difficulty,
+    String sortBy = 'created_at',
+    String sortOrder = 'desc',
+  }) async {
+    final query = <String, dynamic>{
       'page': page,
       'page_size': pageSize,
-      'sort_by': 'created_at',
-      'sort_order': 'desc',
-    });
+      'sort_by': sortBy,
+      'sort_order': sortOrder,
+      if (category != null && category.isNotEmpty) 'category': category,
+      if (difficulty != null) 'difficulty': difficulty,
+    };
+    final uri = _uri('/api/questions/page', query);
     final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     return QuestionPage.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
@@ -654,6 +1606,70 @@ class ApiClient {
     return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
+  Future<QuestionItem> updateQuestion(
+    int id, {
+    required String stem,
+    required String category,
+    required int difficulty,
+  }) async {
+    final uri = _uri('/api/questions/$id');
+    final res = await _guardedRequest(
+      () => http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'stem': stem, 'category': category, 'difficulty': difficulty}),
+      ),
+      uri: uri,
+      method: 'PUT',
+    );
+    _check(res);
+    return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteQuestion(int id) async {
+    final uri = _uri('/api/questions/$id');
+    final res = await _guardedRequest(() => http.delete(uri), uri: uri, method: 'DELETE');
+    _check(res);
+  }
+
+  Future<QuestionItem> refreshQuestionReference(int id) async {
+    final uri = _uri('/api/questions/$id/refresh-reference');
+    final res = await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
+    _check(res);
+    return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<List<PracticeRecordItem>> fetchQuestionRecords(int id) async {
+    final uri = _uri('/api/questions/$id/records');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
+    return list.map((e) => PracticeRecordItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<PracticeSubmitResult> submitDailyPracticeAnswer(int questionId, String userAnswer) async {
+    final uri = _uri('/api/practice/daily/submit');
+    final res = await _guardedRequest(
+      () => http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
+      ),
+      uri: uri,
+      method: 'POST',
+    );
+    _check(res);
+    return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<List<String>> fetchCategoryNames() async {
+    final uri = _uri('/api/categories');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
+    return list.map((e) => (e as Map<String, dynamic>)['name'] as String).toList();
+  }
+
   Future<List<PracticeCategory>> fetchPracticeCategories() async {
     final uri = _uri('/api/practice/categories');
     final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
@@ -664,10 +1680,40 @@ class ApiClient {
         .toList();
   }
 
+  Future<PracticeActivityResponse> fetchPracticeActivity() async {
+    final uri = _uri('/api/practice/activity');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    return PracticeActivityResponse.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<List<PracticeSessionListItem>> fetchPracticeSessions() async {
+    final uri = _uri('/api/practice/sessions');
+    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    _check(res);
+    final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
+    return list.map((e) => PracticeSessionListItem.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
   Future<PracticeSession> startPracticeSession(String? category, int count) async {
     final query = {'count': count, if (category != null) 'category': category};
     final uri = _uri('/api/practice/sessions/start', query);
     final res = await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
+    _check(res);
+    return PracticeSession.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<PracticeSession> startPracticeSessionCustom(List<int> questionIds) async {
+    final uri = _uri('/api/practice/sessions/start/custom');
+    final res = await _guardedRequest(
+      () => http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'question_ids': questionIds}),
+      ),
+      uri: uri,
+      method: 'POST',
+    );
     _check(res);
     return PracticeSession.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
@@ -769,6 +1815,8 @@ class QuestionItem {
     required this.category,
     required this.difficulty,
     required this.masteryScore,
+    required this.referenceAnswer,
+    required this.createdAt,
   });
 
   final int id;
@@ -776,6 +1824,13 @@ class QuestionItem {
   final String category;
   final int difficulty;
   final int masteryScore;
+  final String referenceAnswer;
+  final String createdAt;
+
+  String get difficultyStars {
+    final n = difficulty.clamp(1, 5);
+    return '${'★' * n}${'☆' * (5 - n)}';
+  }
 
   factory QuestionItem.fromJson(Map<String, dynamic> json) => QuestionItem(
         id: json['id'] as int,
@@ -783,16 +1838,22 @@ class QuestionItem {
         category: json['category'] as String,
         difficulty: json['difficulty'] as int,
         masteryScore: json['mastery_score'] as int? ?? 0,
+        referenceAnswer: (json['reference_answer'] as String?) ?? '',
+        createdAt: (json['created_at'] as String?) ?? '',
       );
 }
 
 class QuestionPage {
-  QuestionPage({required this.total, required this.items});
+  QuestionPage({required this.total, required this.page, required this.pageSize, required this.items});
   final int total;
+  final int page;
+  final int pageSize;
   final List<QuestionItem> items;
 
   factory QuestionPage.fromJson(Map<String, dynamic> json) => QuestionPage(
         total: json['total'] as int? ?? 0,
+        page: json['page'] as int? ?? 1,
+        pageSize: json['page_size'] as int? ?? 20,
         items: (json['items'] as List<dynamic>? ?? const [])
             .map((e) => QuestionItem.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -812,6 +1873,61 @@ class PracticeCategory {
       );
 }
 
+class PracticeActivityDay {
+  PracticeActivityDay({required this.date, required this.count, required this.level});
+  final String date;
+  final int count;
+  final int level;
+
+  factory PracticeActivityDay.fromJson(Map<String, dynamic> json) => PracticeActivityDay(
+        date: json['date'] as String? ?? '',
+        count: json['count'] as int? ?? 0,
+        level: json['level'] as int? ?? 0,
+      );
+}
+
+class PracticeActivityResponse {
+  PracticeActivityResponse({
+    required this.today,
+    required this.totalQuestions,
+    required this.activeDays,
+    required this.days,
+  });
+  final String today;
+  final int totalQuestions;
+  final int activeDays;
+  final List<PracticeActivityDay> days;
+
+  factory PracticeActivityResponse.fromJson(Map<String, dynamic> json) => PracticeActivityResponse(
+        today: json['today'] as String? ?? '',
+        totalQuestions: json['total_questions'] as int? ?? 0,
+        activeDays: json['active_days'] as int? ?? 0,
+        days: (json['days'] as List<dynamic>? ?? const [])
+            .map((e) => PracticeActivityDay.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class PracticeSessionListItem {
+  PracticeSessionListItem({
+    required this.id,
+    required this.totalScore,
+    required this.questionCount,
+    required this.completedAt,
+  });
+  final int id;
+  final int totalScore;
+  final int questionCount;
+  final String? completedAt;
+
+  factory PracticeSessionListItem.fromJson(Map<String, dynamic> json) => PracticeSessionListItem(
+        id: json['id'] as int? ?? 0,
+        totalScore: json['total_score'] as int? ?? 0,
+        questionCount: json['question_count'] as int? ?? 10,
+        completedAt: json['completed_at'] as String?,
+      );
+}
+
 class PracticeSession {
   PracticeSession({required this.sessionId, required this.questions});
   final int sessionId;
@@ -826,21 +1942,57 @@ class PracticeSession {
 }
 
 class PracticeSubmitResult {
-  PracticeSubmitResult({required this.analysis, required this.referenceAnswer});
+  PracticeSubmitResult({required this.score, required this.analysis, required this.referenceAnswer});
+  final int score;
   final String analysis;
   final String referenceAnswer;
 
   factory PracticeSubmitResult.fromJson(Map<String, dynamic> json) => PracticeSubmitResult(
+        score: ((json['record'] as Map<String, dynamic>?)?['ai_score'] as int?) ?? 0,
         analysis: json['analysis'] as String,
         referenceAnswer: json['reference_answer'] as String? ?? '',
       );
 }
 
+class PracticeRecordItem {
+  PracticeRecordItem({
+    required this.id,
+    required this.userAnswer,
+    required this.aiAnswer,
+    required this.aiScore,
+    required this.createdAt,
+  });
+  final int id;
+  final String userAnswer;
+  final String aiAnswer;
+  final int aiScore;
+  final String createdAt;
+
+  factory PracticeRecordItem.fromJson(Map<String, dynamic> json) => PracticeRecordItem(
+        id: json['id'] as int,
+        userAnswer: (json['user_answer'] as String?) ?? '',
+        aiAnswer: (json['ai_answer'] as String?) ?? '',
+        aiScore: (json['ai_score'] as int?) ?? 0,
+        createdAt: (json['created_at'] as String?) ?? '',
+      );
+}
+
 class PracticeSummary {
-  PracticeSummary({required this.totalScore});
+  PracticeSummary({
+    required this.sessionId,
+    required this.totalScore,
+    required this.recordIds,
+    required this.questionCount,
+  });
+  final int sessionId;
   final int totalScore;
+  final List<int> recordIds;
+  final int questionCount;
 
   factory PracticeSummary.fromJson(Map<String, dynamic> json) => PracticeSummary(
+        sessionId: json['session_id'] as int? ?? 0,
         totalScore: json['total_score'] as int,
+        recordIds: (json['record_ids'] as List<dynamic>? ?? const []).map((e) => e as int).toList(),
+        questionCount: json['question_count'] as int? ?? 10,
       );
 }
