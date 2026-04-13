@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flex_color_scheme/flex_color_scheme.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
@@ -341,41 +340,17 @@ class _HomeTabState extends State<HomeTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Card(
-              clipBehavior: Clip.antiAlias,
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                      colors: [Color(0xFF8D73FF), Color(0xFF6D4DFF)]),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Interview Collector',
-                        style: TextStyle(color: Colors.white, fontSize: 24)),
-                    SizedBox(height: 8),
-                    Text('API: $apiBaseUrl',
-                        style: TextStyle(color: Colors.white70)),
-                  ],
-                ),
-              ),
-            ).animate().fadeIn(duration: 320.ms).slideY(begin: 0.08, end: 0),
+            const Text(
+              'INTERVIEW COLLECTOR',
+              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 16),
             if (loading)
               const AppLoadingView(padding: EdgeInsets.all(24))
             else if (error != null)
               AppErrorText(error!)
             else
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _StatCard(title: '题目总数', value: '$total'),
-                  _StatCard(title: '近53周总记录', value: '$activityTotalQuestions'),
-                  _StatCard(title: '活跃天数', value: '$activityDaysCount'),
-                ],
-              ),
+              const SizedBox.shrink(),
             const SizedBox(height: 16),
             Card(
               child: Padding(
@@ -549,8 +524,7 @@ class _HomeTabState extends State<HomeTab> {
                     if (dailyQuestion == null)
                       const Text('暂无题目，请先导入或新增题目。')
                     else ...[
-                      Text(
-                          '今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题 / 共 $total 题'),
+                      Text('今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题'),
                       const SizedBox(height: 6),
                       Text(dailyQuestion!.stem),
                       const SizedBox(height: 6),
@@ -569,53 +543,7 @@ class _HomeTabState extends State<HomeTab> {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            const Card(
-              color: Color(0xFFEFEBFF),
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('使用提示',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600)),
-                    SizedBox(height: 8),
-                    Text('1. Android 模拟器请用 10.0.2.2 访问本机后端。'),
-                    Text('2. 真机调试请把 API_BASE_URL 改成你电脑局域网 IP。'),
-                    Text('3. 题库与练习页都支持下拉刷新。'),
-                  ],
-                ),
-              ),
-            ).animate().fadeIn(delay: 120.ms, duration: 280.ms),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.title, required this.value});
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 170,
-      child: Card(
-        color: const Color(0xFFF2EEFF),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 6),
-              Text(value, style: Theme.of(context).textTheme.headlineSmall),
-            ],
-          ),
         ),
       ),
     );
@@ -701,6 +629,8 @@ class QuestionsTab extends StatefulWidget {
 
 class _QuestionsTabState extends State<QuestionsTab> {
   bool loading = true;
+  bool loadingMore = false;
+  bool hasMore = true;
   String? error;
   List<QuestionItem> questions = [];
   List<String> categoryOptions = [];
@@ -711,11 +641,22 @@ class _QuestionsTabState extends State<QuestionsTab> {
   String categoryKeyword = '';
   int? difficulty;
   String sortMode = 'recent_desc';
+  bool filterExpanded = false;
+  final scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
+    scrollController.addListener(_onScroll);
     _loadBootstrap();
+  }
+
+  @override
+  void dispose() {
+    scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
   }
 
   Future<void> _loadBootstrap() async {
@@ -726,7 +667,7 @@ class _QuestionsTabState extends State<QuestionsTab> {
     try {
       final cats = await widget.api.fetchCategoryNames();
       categoryOptions = cats;
-      await _load();
+      await _load(reset: true);
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
@@ -752,15 +693,22 @@ class _QuestionsTabState extends State<QuestionsTab> {
     }
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool reset = false}) async {
+    if (loading || loadingMore) return;
+    if (!reset && !hasMore) return;
     setState(() {
-      loading = true;
+      if (reset) {
+        loading = true;
+      } else {
+        loadingMore = true;
+      }
       error = null;
     });
     try {
       final sort = _sortParams();
+      final requestPage = reset ? 1 : page;
       final pageData = await widget.api.fetchQuestionsPage(
-        page: page,
+        page: requestPage,
         pageSize: pageSize,
         category: category.trim().isEmpty ? null : category.trim(),
         difficulty: difficulty,
@@ -769,23 +717,42 @@ class _QuestionsTabState extends State<QuestionsTab> {
       );
       if (!mounted) return;
       setState(() {
-        questions = pageData.items;
+        if (reset) {
+          questions = pageData.items;
+        } else {
+          questions = [...questions, ...pageData.items];
+        }
         total = pageData.total;
-        page = pageData.page;
+        page = pageData.page + 1;
         pageSize = pageData.pageSize;
+        hasMore = questions.length < total && pageData.items.isNotEmpty;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => error = _formatError(e));
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted) {
+        setState(() {
+          loading = false;
+          loadingMore = false;
+        });
+      }
     }
   }
 
-  Future<void> _changePage(int nextPage) async {
-    final totalPages = (total / pageSize).ceil().clamp(1, 100000);
-    page = nextPage.clamp(1, totalPages);
-    await _load();
+  void _onScroll() {
+    if (!scrollController.hasClients || loading || loadingMore || !hasMore) {
+      return;
+    }
+    if (scrollController.position.extentAfter < 300) {
+      _load();
+    }
+  }
+
+  Future<void> _reloadWithFilters() async {
+    page = 1;
+    hasMore = true;
+    await _load(reset: true);
   }
 
   List<String> get filteredCategoryOptions {
@@ -796,83 +763,14 @@ class _QuestionsTabState extends State<QuestionsTab> {
         .toList();
   }
 
-  Future<void> _openCreateSheet() async {
-    final stemController = TextEditingController();
-    final categoryController = TextEditingController(text: '未分类');
-    int difficulty = 3;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) => Padding(
-            padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              top: 16,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                    controller: stemController,
-                    decoration: const InputDecoration(labelText: '题目内容')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: categoryController,
-                    decoration: const InputDecoration(labelText: '分类')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<int>(
-                  value: difficulty,
-                  decoration: const InputDecoration(labelText: '难度'),
-                  items: [1, 2, 3, 4, 5]
-                      .map((v) =>
-                          DropdownMenuItem(value: v, child: Text('难度 $v')))
-                      .toList(),
-                  onChanged: (v) => setSheetState(() => difficulty = v ?? 3),
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: () async {
-                    if (stemController.text.trim().length < 3) return;
-                    await widget.api.createQuestion(
-                      stem: stemController.text.trim(),
-                      category: categoryController.text.trim().isEmpty
-                          ? '未分类'
-                          : categoryController.text.trim(),
-                      difficulty: difficulty,
-                    );
-                    if (!context.mounted) return;
-                    Navigator.of(context).pop();
-                    _load();
-                  },
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('创建题目'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    stemController.dispose();
-    categoryController.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final totalPages = (total / pageSize).ceil().clamp(1, 100000);
     return Scaffold(
       appBar: AppBar(title: const Text('题库')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openCreateSheet,
-        icon: const Icon(Icons.add),
-        label: const Text('新增'),
-      ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () => _load(reset: true),
         child: ListView(
+          controller: scrollController,
           padding: const EdgeInsets.all(12),
           children: [
             Card(
@@ -881,97 +779,67 @@ class _QuestionsTabState extends State<QuestionsTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('筛选'),
-                    const SizedBox(height: 8),
-                    TextField(
-                      decoration: const InputDecoration(labelText: '分类查找（关键词）'),
-                      onChanged: (v) => setState(() => categoryKeyword = v),
+                    InkWell(
+                      onTap: () => setState(() => filterExpanded = !filterExpanded),
+                      child: Row(
+                        children: [
+                          const Text('筛选', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const Spacer(),
+                          Icon(filterExpanded ? Icons.expand_less : Icons.expand_more),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: category.isEmpty ? '' : category,
-                      items: [
-                        const DropdownMenuItem(value: '', child: Text('全部分类')),
-                        ...filteredCategoryOptions.map(
-                            (c) => DropdownMenuItem(value: c, child: Text(c))),
-                      ],
-                      onChanged: (v) => setState(() => category = v ?? ''),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<int?>(
-                      value: difficulty,
-                      items: const [
-                        DropdownMenuItem<int?>(
-                            value: null, child: Text('全部难度')),
-                        DropdownMenuItem<int?>(value: 1, child: Text('难度 1')),
-                        DropdownMenuItem<int?>(value: 2, child: Text('难度 2')),
-                        DropdownMenuItem<int?>(value: 3, child: Text('难度 3')),
-                        DropdownMenuItem<int?>(value: 4, child: Text('难度 4')),
-                        DropdownMenuItem<int?>(value: 5, child: Text('难度 5')),
-                      ],
-                      onChanged: (v) => setState(() => difficulty = v),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: sortMode,
-                      items: const [
-                        DropdownMenuItem(
-                            value: 'recent_desc', child: Text('最近遇到：近到远（默认）')),
-                        DropdownMenuItem(
-                            value: 'recent_asc', child: Text('最近遇到：远到近')),
-                        DropdownMenuItem(
-                            value: 'created_desc', child: Text('入库时间：新到旧')),
-                        DropdownMenuItem(
-                            value: 'created_asc', child: Text('入库时间：旧到新')),
-                        DropdownMenuItem(
-                            value: 'mastery_desc', child: Text('掌握度：高到低')),
-                        DropdownMenuItem(
-                            value: 'mastery_asc', child: Text('掌握度：低到高')),
-                      ],
-                      onChanged: (v) =>
-                          setState(() => sortMode = v ?? 'recent_desc'),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        FilledButton(
-                          onPressed: () {
-                            page = 1;
-                            _load();
-                          },
-                          child: const Text('刷新'),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () {
-                            setState(() {
-                              category = '';
-                              difficulty = null;
-                              sortMode = 'recent_desc';
-                              page = 1;
-                            });
-                            _load();
-                          },
-                          child: const Text('重置'),
-                        ),
-                        const Spacer(),
-                        DropdownButton<int>(
-                          value: pageSize,
-                          items: const [10, 20, 50, 100]
-                              .map((v) => DropdownMenuItem(
-                                  value: v, child: Text('每页 $v')))
-                              .toList(),
-                          onChanged: (v) {
-                            if (v == null) return;
-                            setState(() {
-                              pageSize = v;
-                              page = 1;
-                            });
-                            _load();
-                          },
-                        ),
-                      ],
-                    ),
+                    if (filterExpanded) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        decoration: const InputDecoration(labelText: '分类查找（关键词）'),
+                        onChanged: (v) => setState(() => categoryKeyword = v),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: category.isEmpty ? '' : category,
+                        items: [
+                          const DropdownMenuItem(value: '', child: Text('全部分类')),
+                          ...filteredCategoryOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))),
+                        ],
+                        onChanged: (v) {
+                          setState(() => category = v ?? '');
+                          _reloadWithFilters();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<int?>(
+                        value: difficulty,
+                        items: const [
+                          DropdownMenuItem<int?>(value: null, child: Text('全部难度')),
+                          DropdownMenuItem<int?>(value: 1, child: Text('难度 1')),
+                          DropdownMenuItem<int?>(value: 2, child: Text('难度 2')),
+                          DropdownMenuItem<int?>(value: 3, child: Text('难度 3')),
+                          DropdownMenuItem<int?>(value: 4, child: Text('难度 4')),
+                          DropdownMenuItem<int?>(value: 5, child: Text('难度 5')),
+                        ],
+                        onChanged: (v) {
+                          setState(() => difficulty = v);
+                          _reloadWithFilters();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: sortMode,
+                        items: const [
+                          DropdownMenuItem(value: 'recent_desc', child: Text('最近遇到：近到远（默认）')),
+                          DropdownMenuItem(value: 'recent_asc', child: Text('最近遇到：远到近')),
+                          DropdownMenuItem(value: 'created_desc', child: Text('入库时间：新到旧')),
+                          DropdownMenuItem(value: 'created_asc', child: Text('入库时间：旧到新')),
+                          DropdownMenuItem(value: 'mastery_desc', child: Text('掌握度：高到低')),
+                          DropdownMenuItem(value: 'mastery_asc', child: Text('掌握度：低到高')),
+                        ],
+                        onChanged: (v) {
+                          setState(() => sortMode = v ?? 'recent_desc');
+                          _reloadWithFilters();
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -991,48 +859,59 @@ class _QuestionsTabState extends State<QuestionsTab> {
                 (q) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Card(
-                    child: ListTile(
-                      title: Text(q.stem),
-                      subtitle: Text(
-                          '分类：${q.category} ｜ 难度：${q.difficultyStars} ｜ 完成度：${q.masteryScore}%'),
-                      trailing: OutlinedButton(
-                        onPressed: () async {
-                          final changed =
-                              await Navigator.of(context).push<bool>(
-                            MaterialPageRoute(
-                              builder: (_) => QuestionDetailPage(
-                                api: widget.api,
-                                question: q,
-                                categoryOptions: categoryOptions,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () async {
+                        final changed = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) => QuestionDetailPage(
+                              api: widget.api,
+                              question: q,
+                              categoryOptions: categoryOptions,
+                            ),
+                          ),
+                        );
+                        if (changed == true) {
+                          await _load(reset: true);
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(q.stem),
+                            const SizedBox(height: 6),
+                            Text('分类：${q.category} ｜ 难度：${q.difficultyStars}'),
+                            const SizedBox(height: 6),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(
+                                value: (q.masteryScore.clamp(0, 100)) / 100,
+                                minHeight: 10,
+                                backgroundColor: const Color(0xFFEFEFFF),
+                                valueColor: const AlwaysStoppedAnimation(Color(0xFF6D4DFF)),
                               ),
                             ),
-                          );
-                          if (changed == true) {
-                            await _load();
-                          }
-                        },
-                        child: const Text('查看与操作'),
+                            const SizedBox(height: 4),
+                            Text('完成度：${q.masteryScore}%'),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-              Row(
-                children: [
-                  OutlinedButton(
-                    onPressed: page <= 1 ? null : () => _changePage(page - 1),
-                    child: const Text('上一页'),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('第 $page / $totalPages 页'),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed:
-                        page >= totalPages ? null : () => _changePage(page + 1),
-                    child: const Text('下一页'),
-                  ),
-                ],
-              ),
+              if (loadingMore)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (!hasMore)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Center(child: Text('已加载全部题目')),
+                ),
             ],
           ],
         ),
@@ -1358,6 +1237,7 @@ class _PracticeTabState extends State<PracticeTab> {
   List<QuestionItem> memorizeQuestions = [];
   int memorizeIndex = 0;
   bool memorizePrepared = false;
+  bool filterExpanded = false;
 
   @override
   void initState() {
@@ -1576,6 +1456,7 @@ class _PracticeTabState extends State<PracticeTab> {
         current == null ? null : perQuestionResult[current.id];
     final maxScore =
         (summary?.questionCount ?? session?.questions.length ?? 10) * 10;
+    final shouldShowStartOnly = !loading && session == null && !memorizePrepared;
     return Scaffold(
       appBar: AppBar(title: const Text('练习')),
       body: RefreshIndicator(
@@ -1590,77 +1471,85 @@ class _PracticeTabState extends State<PracticeTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        FilledButton(
-                          onPressed: mode == TrainMode.practice
-                              ? null
-                              : () => setState(() => mode = TrainMode.practice),
-                          child: const Text('刷题模式'),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: mode == TrainMode.memorize
-                              ? null
-                              : () => setState(() => mode = TrainMode.memorize),
-                          child: const Text('背题模式'),
-                        ),
-                      ],
+                    InkWell(
+                      onTap: () => setState(() => filterExpanded = !filterExpanded),
+                      child: Row(
+                        children: [
+                          const Text('训练设置', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const Spacer(),
+                          Icon(filterExpanded ? Icons.expand_less : Icons.expand_more),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      children: sessionSizes
-                          .map(
-                            (n) => ChoiceChip(
-                              label: Text('$n 题'),
-                              selected: selectedCount == n,
-                              onSelected: (_) =>
-                                  setState(() => selectedCount = n),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      value: selectedCategory,
-                      items: [
-                        if (mode == TrainMode.practice)
-                          const DropdownMenuItem(
-                              value: '', child: Text('全部分类随机')),
-                        ...categories.map(
-                          (item) => DropdownMenuItem(
-                            value: item.category,
-                            enabled: item.totalQuestions >= selectedCount,
-                            child: Text(
-                              '${item.category}（${item.totalQuestions}题）${item.totalQuestions < selectedCount ? ' — 不足$selectedCount题' : ''}',
+                    if (filterExpanded) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          FilledButton(
+                            onPressed: mode == TrainMode.practice ? null : () => setState(() => mode = TrainMode.practice),
+                            child: const Text('刷题模式'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: mode == TrainMode.memorize ? null : () => setState(() => mode = TrainMode.memorize),
+                            child: const Text('背题模式'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        children: sessionSizes
+                            .map(
+                              (n) => ChoiceChip(
+                                label: Text('$n 题'),
+                                selected: selectedCount == n,
+                                onSelected: (_) => setState(() => selectedCount = n),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: selectedCategory,
+                        items: [
+                          if (mode == TrainMode.practice) const DropdownMenuItem(value: '', child: Text('全部分类随机')),
+                          ...categories.map(
+                            (item) => DropdownMenuItem(
+                              value: item.category,
+                              enabled: item.totalQuestions >= selectedCount,
+                              child: Text(
+                                '${item.category}（${item.totalQuestions}题）${item.totalQuestions < selectedCount ? ' — 不足$selectedCount题' : ''}',
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                      onChanged: (v) =>
-                          setState(() => selectedCategory = v ?? ''),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                        onPressed: _loadCategories, child: const Text('刷新分类')),
+                        ],
+                        onChanged: (v) => setState(() => selectedCategory = v ?? ''),
+                      ),
+                    ],
                   ],
                 ),
               ),
             ),
             if (loading) const AppLoadingView(),
-            if (!loading && mode == TrainMode.practice && session == null)
-              Center(
-                child: FilledButton(
-                  onPressed: canStartPractice ? _startSession : null,
-                  child: Text('开始刷题（$selectedCount 题）'),
+            if (shouldShowStartOnly && mode == TrainMode.practice)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 80),
+                child: Center(
+                  child: FilledButton(
+                    onPressed: canStartPractice ? _startSession : null,
+                    child: Text('开始刷题（$selectedCount 题）'),
+                  ),
                 ),
               ),
-            if (!loading && mode == TrainMode.memorize && !memorizePrepared)
-              Center(
-                child: FilledButton(
-                  onPressed: canStartMemorize ? _prepareMemorize : null,
-                  child: Text('开始背题（$selectedCount 题）'),
+            if (shouldShowStartOnly && mode == TrainMode.memorize)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 80),
+                child: Center(
+                  child: FilledButton(
+                    onPressed: canStartMemorize ? _prepareMemorize : null,
+                    child: Text('开始背题（$selectedCount 题）'),
+                  ),
                 ),
               ),
             if (mode == TrainMode.memorize &&
@@ -1810,6 +1699,8 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
   bool loading = true;
   String? error;
   List<PracticeSessionListItem> sessions = [];
+  List<PracticeSessionListItem> filteredSessions = [];
+  String selectedDate = '';
 
   @override
   void initState() {
@@ -1824,6 +1715,7 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
     });
     try {
       sessions = await widget.api.fetchPracticeSessions();
+      filteredSessions = sessions;
     } catch (e) {
       error = _formatError(e);
     } finally {
@@ -1831,62 +1723,28 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
     }
   }
 
-  Future<void> _openSession(int sessionId) async {
-    await showDialog<void>(
+  void _applyDateFilter() {
+    if (selectedDate.isEmpty) {
+      filteredSessions = sessions;
+    } else {
+      filteredSessions = sessions.where((s) => (s.completedAt ?? '').startsWith(selectedDate)).toList();
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
       context: context,
-      builder: (context) => FutureBuilder<PracticeSessionRecordsResponse>(
-        future: widget.api.fetchPracticeSessionRecords(sessionId),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const AlertDialog(
-              content: SizedBox(
-                  height: 120,
-                  child: Center(child: CircularProgressIndicator())),
-            );
-          }
-          final data = snapshot.data!;
-          return AlertDialog(
-            title: const Text('刷题详情'),
-            content: SizedBox(
-              width: 720,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('会话：#$sessionId'),
-                    Text('总分：${data.totalScore}/${data.questionCount * 10}'),
-                    Text('时间：${data.completedAt ?? "-"}'),
-                    const SizedBox(height: 10),
-                    ...data.records.map(
-                      (r) => Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('评分：${r.aiScore}/10'),
-                              Text(
-                                  '用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
-                              const Text('AI 解析：'),
-                              AppMarkdown(r.aiAnswer),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('关闭'))
-            ],
-          );
-        },
-      ),
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
     );
+    if (d == null) return;
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    setState(() {
+      selectedDate = '${d.year}-$m-$day';
+      _applyDateFilter();
+    });
   }
 
   @override
@@ -1898,29 +1756,94 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    OutlinedButton(onPressed: _pickDate, child: Text(selectedDate.isEmpty ? '按日期筛选' : selectedDate)),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => setState(() {
+                        selectedDate = '';
+                        _applyDateFilter();
+                      }),
+                      child: const Text('清空'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
             if (error != null) AppErrorText(error!),
             if (loading)
               const AppLoadingView()
-            else if (sessions.isEmpty)
+            else if (filteredSessions.isEmpty)
               const AppEmptyCard('暂无已完成刷题记录')
             else
-              ...sessions.map(
+              ...filteredSessions.map(
                 (s) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Card(
                     child: ListTile(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PracticeSessionDetailPage(api: widget.api, sessionId: s.id),
+                        ),
+                      ),
                       title: Text('总分：${s.totalScore}/${s.questionCount * 10}'),
                       subtitle: Text('时间：${s.completedAt ?? "-"}'),
-                      trailing: OutlinedButton(
-                        onPressed: () => _openSession(s.id),
-                        child: const Text('查看详情'),
-                      ),
                     ),
                   ),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class PracticeSessionDetailPage extends StatelessWidget {
+  const PracticeSessionDetailPage({super.key, required this.api, required this.sessionId});
+  final ApiClient api;
+  final int sessionId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('刷题详情')),
+      body: FutureBuilder<PracticeSessionRecordsResponse>(
+        future: api.fetchPracticeSessionRecords(sessionId),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const AppLoadingView();
+          final data = snapshot.data!;
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text('会话：#$sessionId'),
+              Text('总分：${data.totalScore}/${data.questionCount * 10}'),
+              Text('时间：${data.completedAt ?? "-"}'),
+              const SizedBox(height: 10),
+              ...data.records.map(
+                (r) => Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('评分：${r.aiScore}/10'),
+                        Text('用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
+                        const Text('AI 解析：'),
+                        AppMarkdown(r.aiAnswer),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
