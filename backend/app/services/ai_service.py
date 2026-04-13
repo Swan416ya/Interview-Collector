@@ -248,7 +248,27 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
 }
 """.strip()
     input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
-    result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text, thinking_type="disabled")
+    try:
+        result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text, thinking_type="disabled")
+    except HTTPException as exc:
+        # Grading path fallback:
+        # Some model outputs are almost-JSON but contain unescaped quotes inside analysis,
+        # causing strict JSON parse failure. Try to salvage score/analysis from preview text.
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict) and detail.get("message") == "Failed to parse AI JSON output":
+            preview = str(detail.get("output_preview", ""))
+            score_match = re.search(r'"score"\s*:\s*(-?\d+)', preview)
+            analysis_match = re.search(r'"analysis"\s*:\s*"([\s\S]*)"\s*\}\s*$', preview)
+            if score_match and analysis_match:
+                score = int(score_match.group(1))
+                analysis = analysis_match.group(1).strip()
+                if len(analysis) > 200:
+                    analysis = analysis[:200]
+                score = max(0, min(10, score))
+                logger.warning("AI grading parsed via fallback regex due to invalid JSON output")
+                return {"score": score, "analysis": analysis}
+        raise
+
     if "score" not in result or "analysis" not in result:
         raise HTTPException(status_code=502, detail="AI grading output missing score or analysis")
     try:
