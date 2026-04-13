@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { Chart, registerables } from "chart.js";
 import { computed, nextTick, onMounted, reactive, ref } from "vue";
-import { fetchQuestionRecords, type PracticeRecord, type Question } from "../api/questions";
+import LoadingIndicator from "../components/LoadingIndicator.vue";
+import {
+  fetchQuestionRecords,
+  refreshQuestionReferenceAnswer,
+  type PracticeRecord,
+  type Question
+} from "../api/questions";
 import { fetchCategories } from "../api/taxonomy";
+import { submitDailyPracticeAnswer } from "../api/practice";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import { useQuestionStore } from "../stores/questionStore";
 
@@ -27,6 +34,10 @@ const selectedQuestion = ref<Question | null>(null);
 const editing = ref(false);
 const recordsLoaded = ref(false);
 const records = ref<PracticeRecord[]>([]);
+const singlePracticeAnswer = ref("");
+const singlePracticeSubmitting = ref(false);
+const singlePracticeResult = ref<{ score: number; analysis: string; reference: string } | null>(null);
+const refreshingReference = ref(false);
 const scoreChartCanvas = ref<HTMLCanvasElement | null>(null);
 let scoreTrendChart: Chart<"line", number[], string> | null = null;
 
@@ -150,6 +161,8 @@ async function openActionModal(q: Question) {
   showActionModal.value = true;
   recordsLoaded.value = false;
   records.value = [];
+  singlePracticeAnswer.value = "";
+  singlePracticeResult.value = null;
   destroyScoreTrendChart();
   try {
     records.value = await fetchQuestionRecords(q.id);
@@ -166,6 +179,8 @@ function closeActionModal() {
   selectedQuestion.value = null;
   editing.value = false;
   recordsLoaded.value = false;
+  singlePracticeAnswer.value = "";
+  singlePracticeResult.value = null;
 }
 
 async function saveEdit() {
@@ -195,6 +210,38 @@ async function loadRecords() {
   recordsLoaded.value = true;
   await nextTick();
   buildScoreTrendChart();
+}
+
+async function refreshSelectedReference() {
+  if (!selectedQuestion.value) return;
+  refreshingReference.value = true;
+  try {
+    const latest = await refreshQuestionReferenceAnswer(selectedQuestion.value.id);
+    selectedQuestion.value = latest;
+    editForm.stem = latest.stem;
+    editForm.category = latest.category;
+    editForm.difficulty = latest.difficulty;
+    await runFilter();
+  } finally {
+    refreshingReference.value = false;
+  }
+}
+
+async function submitSingleQuestionPractice() {
+  if (!selectedQuestion.value) return;
+  if (!singlePracticeAnswer.value.trim()) return;
+  singlePracticeSubmitting.value = true;
+  try {
+    const data = await submitDailyPracticeAnswer(selectedQuestion.value.id, singlePracticeAnswer.value.trim());
+    singlePracticeResult.value = {
+      score: data.record.ai_score,
+      analysis: data.analysis,
+      reference: data.reference_answer
+    };
+    await loadRecords();
+  } finally {
+    singlePracticeSubmitting.value = false;
+  }
 }
 
 function difficultyStars(level: number): string {
@@ -300,7 +347,8 @@ onMounted(async () => {
         v-if="showActionModal && selectedQuestion"
         style="position: fixed; inset: 0; z-index: 1200; background: rgba(17,24,39,0.36); display: grid; place-items: center;"
       >
-        <div class="swift-card" style="width: 920px; max-width: 95vw; max-height: 88vh; overflow: auto; padding: 16px;">
+        <div class="swift-card q-modal-panel">
+          <button @click="closeActionModal" class="q-modal-close-btn">关闭</button>
           <h3 style="margin-top: 0;">题目详情与操作</h3>
           <p><strong>题目：</strong>{{ selectedQuestion.stem }}</p>
           <div>
@@ -313,6 +361,33 @@ onMounted(async () => {
             <button @click="editing = true">编辑题目</button>
             <button @click="removeCurrent">删除题目</button>
             <button @click="loadRecords">刷新做题记录</button>
+            <button @click="refreshSelectedReference" :disabled="refreshingReference">
+              {{ refreshingReference ? "刷新中..." : "仅刷新参考答案" }}
+            </button>
+          </div>
+
+          <div style="margin-top: 12px; border: 1px solid #e6eaf2; padding: 10px; border-radius: 12px;">
+            <h4 style="margin: 0 0 8px;">单独做这道题（独立判题）</h4>
+            <textarea v-model="singlePracticeAnswer" rows="5" style="width: 100%;" placeholder="输入你的答案"></textarea>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button @click="submitSingleQuestionPractice" :disabled="singlePracticeSubmitting || !singlePracticeAnswer.trim()">
+                {{ singlePracticeSubmitting ? "判题中..." : "提交并判题" }}
+              </button>
+            </div>
+            <LoadingIndicator v-if="singlePracticeSubmitting" text="AI 正在判题..." />
+            <div v-if="singlePracticeResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
+              <p><strong>得分：</strong>{{ singlePracticeResult.score }} / 10</p>
+              <div>
+                <strong>解析：</strong>
+                <MarkdownRenderer v-if="singlePracticeResult.analysis?.trim()" :source="singlePracticeResult.analysis" />
+                <span v-else>-</span>
+              </div>
+              <div>
+                <strong>参考答案：</strong>
+                <MarkdownRenderer v-if="singlePracticeResult.reference?.trim()" :source="singlePracticeResult.reference" />
+                <span v-else>-</span>
+              </div>
+            </div>
           </div>
 
           <div v-if="editing" style="display: grid; gap: 8px; border: 1px solid #e6eaf2; padding: 10px; border-radius: 12px;">
@@ -350,9 +425,6 @@ onMounted(async () => {
             </template>
           </div>
 
-          <div style="margin-top: 12px;">
-            <button @click="closeActionModal">关闭</button>
-          </div>
         </div>
       </div>
     </teleport>
@@ -360,6 +432,23 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.q-modal-panel {
+  position: relative;
+  width: 920px;
+  max-width: 95vw;
+  max-height: 88vh;
+  overflow: auto;
+  padding: 16px;
+}
+
+.q-modal-close-btn {
+  position: sticky;
+  top: 8px;
+  margin-left: auto;
+  display: block;
+  z-index: 10;
+}
+
 .q-score-chart-wrap {
   position: relative;
   height: 220px;

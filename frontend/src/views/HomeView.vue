@@ -249,6 +249,7 @@ async function submitDailyAnswer() {
     dailySubmitting.value = false;
   }
 }
+
 </script>
 
 <template>
@@ -354,7 +355,16 @@ async function submitDailyAnswer() {
         v-if="showDailyModal && dailyQuestion"
         style="position: fixed; inset: 0; z-index: 1200; background: rgba(17,24,39,0.36); display: grid; place-items: center;"
       >
-        <div class="swift-card" style="width: 900px; max-width: 95vw; max-height: 88vh; overflow: auto; padding: 16px;">
+        <div
+          class="swift-card"
+          style="position: relative; width: 900px; max-width: 95vw; max-height: 88vh; overflow: auto; padding: 16px;"
+        >
+          <button
+            @click="showDailyModal = false"
+            style="position: absolute; top: 12px; right: 12px; z-index: 1;"
+          >
+            关闭
+          </button>
           <h3 style="margin-top: 0;">每日一题作答</h3>
           <p><strong>题目：</strong>{{ dailyQuestion.stem }}</p>
           <textarea v-model="dailyAnswer" rows="7" style="width: 100%;" placeholder="输入你的答案"></textarea>
@@ -362,7 +372,6 @@ async function submitDailyAnswer() {
             <button @click="submitDailyAnswer" :disabled="dailySubmitting">
               {{ dailySubmitting ? "判题中..." : "提交并判题" }}
             </button>
-            <button @click="showDailyModal = false">关闭</button>
           </div>
           <LoadingIndicator v-if="dailySubmitting" text="AI 正在判题..." />
           <div v-if="dailyResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">

@@ -77,6 +77,13 @@ export async function fetchQuestionRecords(questionId: number): Promise<Practice
   return data;
 }
 
+export async function refreshQuestionReferenceAnswer(questionId: number): Promise<Question> {
+  const { data } = await apiClient.post<Question>(`/api/questions/${questionId}/refresh-reference`, null, {
+    timeout: 120000
+  });
+  return data;
+}
+
 export interface BackfillReferenceAnswersResponse {
   scanned: number;
   updated: number;

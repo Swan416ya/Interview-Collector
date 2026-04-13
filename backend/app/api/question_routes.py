@@ -146,6 +146,21 @@ def delete_question(question_id: int, db: Session = Depends(get_db)):
     return {"deleted": True}
 
 
+@router.post("/{question_id}/refresh-reference", response_model=QuestionOut)
+def refresh_question_reference_answer(question_id: int, db: Session = Depends(get_db)):
+    item = db.get(Question, question_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Question not found")
+    try:
+        item.reference_answer = call_doubao_reference_answer(item.stem)
+        db.commit()
+        db.refresh(item)
+        return item
+    except Exception:
+        db.rollback()
+        raise
+
+
 @router.get("/{question_id}/records", response_model=list[PracticeRecordOut])
 def list_question_records(question_id: int, db: Session = Depends(get_db)):
     q = db.get(Question, question_id)

@@ -50,6 +50,18 @@ npm run dev
 
 （若尚未安装依赖，先在 `frontend` 目录执行一次 `npm install`。）
 
+### 终端 3（可选）：启动 Flutter Android 客户端
+
+```bash
+cd flutterend
+flutter pub get
+flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:8000
+```
+
+- `flutterend` 使用 Material 3 原生组件。
+- Android 模拟器访问宿主机后端请使用 `10.0.2.2`，不要用 `localhost`。
+- 若用真机调试，请把 `API_BASE_URL` 改成你电脑在局域网的 IP，例如 `http://192.168.1.10:8000`。
+
 ### 打开与验证
 
 - 前端：<http://localhost:5173>（具体端口以 Vite 终端输出为准）
@@ -158,7 +170,32 @@ npm run dev
 
 - Backend: `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`（步骤见本文「本地启动（前后端）」）
 - Frontend: 在 `frontend` 目录 `npm run dev`
+- Flutter Android 客户端: 在 `flutterend` 目录 `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000`
 - DB: Local MySQL `interviewCollector`
+
+### Flutter Android APK 打包与分发
+
+1. 进入 Flutter 客户端目录并构建 release APK：
+
+```bash
+cd flutterend
+flutter build apk --release --dart-define=API_BASE_URL=https://your-api-domain
+```
+
+2. 构建产物位置：
+
+- `flutterend/build/app/outputs/flutter-apk/app-release.apk`
+
+3. 分发方式（调试阶段可先用第 1 种）：
+
+- 通过企业 IM（钉钉/飞书/企业微信）直接发送 APK 给测试同学安装。
+- 上传到网盘并分享下载链接（建议加版本号命名，如 `interview-collector-v1.0.0.apk`）。
+- 若团队需要更规范的内测分发，可接入 Firebase App Distribution 或蒲公英。
+
+4. 首次安装提示：
+
+- Android 设备需允许“安装未知来源应用”。
+- 若后端还在本地网络，测试设备必须与开发机处于同一局域网并可访问 `API_BASE_URL`。
 
 ### Option B: Production (recommended)
 
