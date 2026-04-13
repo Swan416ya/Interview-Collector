@@ -4,6 +4,7 @@ import 'package:flex_color_scheme/flex_color_scheme.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 
@@ -57,12 +58,14 @@ class InterviewCollectorApp extends StatelessWidget {
           elevation: 0,
           margin: EdgeInsets.zero,
           color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(28))),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(Radius.circular(28))),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(22),
             borderSide: BorderSide.none,
@@ -92,7 +95,6 @@ class _AppShellState extends State<AppShell> {
       QuestionsTab(api: _api),
       PracticeTab(api: _api),
       PracticeHistoryTab(api: _api),
-      AnswerRecordsTab(api: _api),
     ];
     return Scaffold(
       body: pages[_index],
@@ -104,7 +106,10 @@ class _AppShellState extends State<AppShell> {
             selectedIndex: _index,
             onDestinationSelected: (v) => setState(() => _index = v),
             destinations: const [
-              NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '首页'),
+              NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: '首页'),
               NavigationDestination(
                 icon: Icon(Icons.menu_book_outlined),
                 selectedIcon: Icon(Icons.menu_book),
@@ -119,11 +124,6 @@ class _AppShellState extends State<AppShell> {
                 icon: Icon(Icons.history_outlined),
                 selectedIcon: Icon(Icons.history),
                 label: '刷题记录',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.receipt_long_outlined),
-                selectedIcon: Icon(Icons.receipt_long),
-                label: '答题记录',
               ),
             ],
           ),
@@ -208,7 +208,8 @@ class _HomeTabState extends State<HomeTab> {
         pickedRank = _fnv1a('$today|daily-v1') % allQuestions.length;
         picked = allQuestions[pickedRank];
         final records = await widget.api.fetchQuestionRecords(picked.id);
-        final todayRecord = records.where((r) => r.createdAt.startsWith(today)).toList();
+        final todayRecord =
+            records.where((r) => r.createdAt.startsWith(today)).toList();
         if (todayRecord.isNotEmpty) doneScore = todayRecord.first.aiScore;
       }
       if (!mounted) return;
@@ -239,12 +240,27 @@ class _HomeTabState extends State<HomeTab> {
     return const Color(0xFF216E39);
   }
 
-  List<List<PracticeActivityDay>> _weekColumns() {
+  List<List<PracticeActivityDay>> _weekColumns(int maxColumns) {
     final cols = <List<PracticeActivityDay>>[];
     for (var i = 0; i < activityDays.length; i += 7) {
       cols.add(activityDays.skip(i).take(7).toList());
     }
-    return cols;
+    if (cols.length <= maxColumns) return cols;
+    return cols.sublist(cols.length - maxColumns);
+  }
+
+  List<String> _monthLabels(List<List<PracticeActivityDay>> cols) {
+    var prev = '';
+    return cols.map((col) {
+      final date = col.isEmpty ? '' : col.first.date;
+      if (date.length < 7) return '';
+      final key = date.substring(0, 7);
+      if (key == prev) return '';
+      prev = key;
+      final month = int.tryParse(date.substring(5, 7)) ?? 1;
+      const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return names[(month - 1).clamp(0, 11)];
+    }).toList();
   }
 
   Future<void> _openDailyDialog() async {
@@ -274,16 +290,20 @@ class _HomeTabState extends State<HomeTab> {
                     const SizedBox(height: 10),
                     Text('得分：${dailyResult!.score} / 10'),
                     const SizedBox(height: 6),
-                    SelectableText('解析：\n${dailyResult!.analysis}'),
+                    const Text('解析：'),
+                    AppMarkdown(dailyResult!.analysis),
                     const SizedBox(height: 6),
-                    SelectableText('参考答案：\n${dailyResult!.referenceAnswer}'),
+                    const Text('参考答案：'),
+                    AppMarkdown(dailyResult!.referenceAnswer),
                   ],
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭')),
             FilledButton(
               onPressed: dailySubmitting
                   ? null
@@ -291,14 +311,17 @@ class _HomeTabState extends State<HomeTab> {
                       if (dailyAnswerController.text.trim().isEmpty) return;
                       setSheetState(() => dailySubmitting = true);
                       try {
-                        final result = await widget.api.submitDailyPracticeAnswer(
+                        final result =
+                            await widget.api.submitDailyPracticeAnswer(
                           dailyQuestion!.id,
                           dailyAnswerController.text.trim(),
                         );
                         dailyResult = result;
                         dailyDoneScore = result.score;
                       } finally {
-                        if (context.mounted) setSheetState(() => dailySubmitting = false);
+                        if (context.mounted) {
+                          setSheetState(() => dailySubmitting = false);
+                        }
                       }
                     },
               child: Text(dailySubmitting ? '判题中...' : '提交并判题'),
@@ -323,14 +346,17 @@ class _HomeTabState extends State<HomeTab> {
               child: Container(
                 padding: const EdgeInsets.all(20),
                 decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [Color(0xFF8D73FF), Color(0xFF6D4DFF)]),
+                  gradient: LinearGradient(
+                      colors: [Color(0xFF8D73FF), Color(0xFF6D4DFF)]),
                 ),
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Interview Collector', style: TextStyle(color: Colors.white, fontSize: 24)),
+                    Text('Interview Collector',
+                        style: TextStyle(color: Colors.white, fontSize: 24)),
                     SizedBox(height: 8),
-                    Text('API: $apiBaseUrl', style: TextStyle(color: Colors.white70)),
+                    Text('API: $apiBaseUrl',
+                        style: TextStyle(color: Colors.white70)),
                   ],
                 ),
               ),
@@ -357,34 +383,104 @@ class _HomeTabState extends State<HomeTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('做题热力图', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const Text('做题热力图',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: _weekColumns()
-                            .map(
-                              (col) => Padding(
-                                padding: const EdgeInsets.only(right: 3),
-                                child: Column(
-                                  children: col
-                                      .map(
-                                        (cell) => Container(
-                                          width: 10,
-                                          height: 10,
-                                          margin: const EdgeInsets.only(bottom: 3),
-                                          decoration: BoxDecoration(
-                                            color: cell.date.compareTo(activityToday) > 0 ? const Color(0xFFEBEDF0) : _heatColor(cell.level),
-                                            borderRadius: BorderRadius.circular(2),
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        const labelWidth = 30.0;
+                        const cell = 10.0;
+                        const gap = 3.0;
+                        final available = (constraints.maxWidth - labelWidth).clamp(80.0, 1200.0);
+                        const colWidth = cell + gap;
+                        final maxCols = (available / colWidth).floor().clamp(1, 53);
+                        final cols = _weekColumns(maxCols);
+                        final months = _monthLabels(cols);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const SizedBox(width: labelWidth),
+                                ...months.map(
+                                  (m) => SizedBox(
+                                    width: colWidth,
+                                    child: Text(
+                                      m,
+                                      style: const TextStyle(fontSize: 9, color: Color(0xFF57606A)),
+                                      overflow: TextOverflow.visible,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            )
-                            .toList(),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(
+                                  width: labelWidth,
+                                  child: Column(
+                                    children: [
+                                      SizedBox(height: 10),
+                                      SizedBox(height: 13, child: Align(alignment: Alignment.centerRight, child: Text('Mon', style: TextStyle(fontSize: 9, color: Color(0xFF57606A))))),
+                                      SizedBox(height: 13),
+                                      SizedBox(height: 13, child: Align(alignment: Alignment.centerRight, child: Text('Wed', style: TextStyle(fontSize: 9, color: Color(0xFF57606A))))),
+                                      SizedBox(height: 13),
+                                      SizedBox(height: 13, child: Align(alignment: Alignment.centerRight, child: Text('Fri', style: TextStyle(fontSize: 9, color: Color(0xFF57606A))))),
+                                      SizedBox(height: 13),
+                                    ],
+                                  ),
+                                ),
+                                ...cols.map(
+                                  (col) => SizedBox(
+                                    width: colWidth,
+                                    child: Column(
+                                      children: col
+                                          .map(
+                                            (cellDay) => Container(
+                                              width: cell,
+                                              height: cell,
+                                              margin: const EdgeInsets.only(bottom: gap),
+                                              decoration: BoxDecoration(
+                                                color: cellDay.date.compareTo(activityToday) > 0
+                                                    ? const Color(0xFFEBEDF0)
+                                                    : _heatColor(cellDay.level),
+                                                borderRadius: BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                          )
+                                          .toList(),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text('Less', style: TextStyle(fontSize: 10, color: Color(0xFF57606A))),
+                        SizedBox(width: 4),
+                        _LegendSwatch(Color(0xFFEBEDF0)),
+                        _LegendSwatch(Color(0xFF9BE9A8)),
+                        _LegendSwatch(Color(0xFF40C463)),
+                        _LegendSwatch(Color(0xFF30A14E)),
+                        _LegendSwatch(Color(0xFF216E39)),
+                        SizedBox(width: 4),
+                        Text('More', style: TextStyle(fontSize: 10, color: Color(0xFF57606A))),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    const Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '色阶：0 灰 · 1-9 浅绿 · 10-19 中绿 · 20-49 深绿 · 50+ 最深绿',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF6E7781)),
                       ),
                     ),
                   ],
@@ -398,7 +494,8 @@ class _HomeTabState extends State<HomeTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('刷题得分率趋势', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const Text('刷题得分率趋势',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
                     if (sessions.isEmpty)
                       const Text('暂无已完成刷题记录')
@@ -410,21 +507,26 @@ class _HomeTabState extends State<HomeTab> {
                             minY: 0,
                             maxY: 100,
                             titlesData: const FlTitlesData(
-                              topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                              rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              topTitles: AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false)),
+                              rightTitles: AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false)),
                             ),
                             lineBarsData: [
                               LineChartBarData(
                                 spots: List.generate(sessions.length, (i) {
                                   final s = sessions[i];
                                   final max = (s.questionCount) * 10;
-                                  final pct = max <= 0 ? 0.0 : (s.totalScore * 100.0 / max);
+                                  final pct = max <= 0
+                                      ? 0.0
+                                      : (s.totalScore * 100.0 / max);
                                   return FlSpot(i.toDouble(), pct);
                                 }),
                                 isCurved: true,
                                 color: const Color(0xFF6D4DFF),
                                 dotData: const FlDotData(show: true),
-                                belowBarData: BarAreaData(show: true, color: const Color(0x336D4DFF)),
+                                belowBarData: BarAreaData(
+                                    show: true, color: const Color(0x336D4DFF)),
                               ),
                             ],
                           ),
@@ -441,22 +543,27 @@ class _HomeTabState extends State<HomeTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('每日一题', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const Text('每日一题',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 8),
                     if (dailyQuestion == null)
                       const Text('暂无题目，请先导入或新增题目。')
                     else ...[
-                      Text('今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题 / 共 $total 题'),
+                      Text(
+                          '今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题 / 共 $total 题'),
                       const SizedBox(height: 6),
                       Text(dailyQuestion!.stem),
                       const SizedBox(height: 6),
-                      Text('分类：${dailyQuestion!.category} ｜ 难度：${dailyQuestion!.difficulty} ｜ 当前掌握：${dailyQuestion!.masteryScore}%'),
+                      Text(
+                          '分类：${dailyQuestion!.category} ｜ 难度：${dailyQuestion!.difficulty} ｜ 当前掌握：${dailyQuestion!.masteryScore}%'),
                       if (dailyDoneScore != null) ...[
                         const SizedBox(height: 6),
-                        Text('今日已完成（$dailyDoneScore/10）', style: const TextStyle(color: Color(0xFF1E7F3B))),
+                        Text('今日已完成（$dailyDoneScore/10）',
+                            style: const TextStyle(color: Color(0xFF1E7F3B))),
                       ],
                       const SizedBox(height: 8),
-                      FilledButton(onPressed: _openDailyDialog, child: const Text('做题')),
+                      FilledButton(
+                          onPressed: _openDailyDialog, child: const Text('做题')),
                     ],
                   ],
                 ),
@@ -470,7 +577,9 @@ class _HomeTabState extends State<HomeTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('使用提示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    Text('使用提示',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600)),
                     SizedBox(height: 8),
                     Text('1. Android 模拟器请用 10.0.2.2 访问本机后端。'),
                     Text('2. 真机调试请把 API_BASE_URL 改成你电脑局域网 IP。'),
@@ -534,7 +643,8 @@ class AppEmptyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(child: Padding(padding: const EdgeInsets.all(14), child: Text(text)));
+    return Card(
+        child: Padding(padding: const EdgeInsets.all(14), child: Text(text)));
   }
 }
 
@@ -544,7 +654,40 @@ class AppErrorText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error));
+    return Text(error,
+        style: TextStyle(color: Theme.of(context).colorScheme.error));
+  }
+}
+
+class AppMarkdown extends StatelessWidget {
+  const AppMarkdown(this.data, {super.key});
+  final String data;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = data.trim().isEmpty ? '-' : data.trim();
+    return MarkdownBody(
+      data: text,
+      selectable: true,
+      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+        p: Theme.of(context).textTheme.bodyMedium,
+      ),
+    );
+  }
+}
+
+class _LegendSwatch extends StatelessWidget {
+  const _LegendSwatch(this.color);
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 10,
+      height: 10,
+      margin: const EdgeInsets.symmetric(horizontal: 1),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+    );
   }
 }
 
@@ -648,7 +791,9 @@ class _QuestionsTabState extends State<QuestionsTab> {
   List<String> get filteredCategoryOptions {
     final key = categoryKeyword.trim();
     if (key.isEmpty) return categoryOptions;
-    return categoryOptions.where((c) => c.toLowerCase().contains(key.toLowerCase())).toList();
+    return categoryOptions
+        .where((c) => c.toLowerCase().contains(key.toLowerCase()))
+        .toList();
   }
 
   Future<void> _openCreateSheet() async {
@@ -670,15 +815,20 @@ class _QuestionsTabState extends State<QuestionsTab> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: stemController, decoration: const InputDecoration(labelText: '题目内容')),
+                TextField(
+                    controller: stemController,
+                    decoration: const InputDecoration(labelText: '题目内容')),
                 const SizedBox(height: 10),
-                TextField(controller: categoryController, decoration: const InputDecoration(labelText: '分类')),
+                TextField(
+                    controller: categoryController,
+                    decoration: const InputDecoration(labelText: '分类')),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<int>(
                   value: difficulty,
                   decoration: const InputDecoration(labelText: '难度'),
                   items: [1, 2, 3, 4, 5]
-                      .map((v) => DropdownMenuItem(value: v, child: Text('难度 $v')))
+                      .map((v) =>
+                          DropdownMenuItem(value: v, child: Text('难度 $v')))
                       .toList(),
                   onChanged: (v) => setSheetState(() => difficulty = v ?? 3),
                 ),
@@ -688,7 +838,9 @@ class _QuestionsTabState extends State<QuestionsTab> {
                     if (stemController.text.trim().length < 3) return;
                     await widget.api.createQuestion(
                       stem: stemController.text.trim(),
-                      category: categoryController.text.trim().isEmpty ? '未分类' : categoryController.text.trim(),
+                      category: categoryController.text.trim().isEmpty
+                          ? '未分类'
+                          : categoryController.text.trim(),
                       difficulty: difficulty,
                     );
                     if (!context.mounted) return;
@@ -740,7 +892,8 @@ class _QuestionsTabState extends State<QuestionsTab> {
                       value: category.isEmpty ? '' : category,
                       items: [
                         const DropdownMenuItem(value: '', child: Text('全部分类')),
-                        ...filteredCategoryOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))),
+                        ...filteredCategoryOptions.map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c))),
                       ],
                       onChanged: (v) => setState(() => category = v ?? ''),
                     ),
@@ -748,7 +901,8 @@ class _QuestionsTabState extends State<QuestionsTab> {
                     DropdownButtonFormField<int?>(
                       value: difficulty,
                       items: const [
-                        DropdownMenuItem<int?>(value: null, child: Text('全部难度')),
+                        DropdownMenuItem<int?>(
+                            value: null, child: Text('全部难度')),
                         DropdownMenuItem<int?>(value: 1, child: Text('难度 1')),
                         DropdownMenuItem<int?>(value: 2, child: Text('难度 2')),
                         DropdownMenuItem<int?>(value: 3, child: Text('难度 3')),
@@ -761,14 +915,21 @@ class _QuestionsTabState extends State<QuestionsTab> {
                     DropdownButtonFormField<String>(
                       value: sortMode,
                       items: const [
-                        DropdownMenuItem(value: 'recent_desc', child: Text('最近遇到：近到远（默认）')),
-                        DropdownMenuItem(value: 'recent_asc', child: Text('最近遇到：远到近')),
-                        DropdownMenuItem(value: 'created_desc', child: Text('入库时间：新到旧')),
-                        DropdownMenuItem(value: 'created_asc', child: Text('入库时间：旧到新')),
-                        DropdownMenuItem(value: 'mastery_desc', child: Text('掌握度：高到低')),
-                        DropdownMenuItem(value: 'mastery_asc', child: Text('掌握度：低到高')),
+                        DropdownMenuItem(
+                            value: 'recent_desc', child: Text('最近遇到：近到远（默认）')),
+                        DropdownMenuItem(
+                            value: 'recent_asc', child: Text('最近遇到：远到近')),
+                        DropdownMenuItem(
+                            value: 'created_desc', child: Text('入库时间：新到旧')),
+                        DropdownMenuItem(
+                            value: 'created_asc', child: Text('入库时间：旧到新')),
+                        DropdownMenuItem(
+                            value: 'mastery_desc', child: Text('掌握度：高到低')),
+                        DropdownMenuItem(
+                            value: 'mastery_asc', child: Text('掌握度：低到高')),
                       ],
-                      onChanged: (v) => setState(() => sortMode = v ?? 'recent_desc'),
+                      onChanged: (v) =>
+                          setState(() => sortMode = v ?? 'recent_desc'),
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -797,7 +958,8 @@ class _QuestionsTabState extends State<QuestionsTab> {
                         DropdownButton<int>(
                           value: pageSize,
                           items: const [10, 20, 50, 100]
-                              .map((v) => DropdownMenuItem(value: v, child: Text('每页 $v')))
+                              .map((v) => DropdownMenuItem(
+                                  value: v, child: Text('每页 $v')))
                               .toList(),
                           onChanged: (v) {
                             if (v == null) return;
@@ -831,10 +993,12 @@ class _QuestionsTabState extends State<QuestionsTab> {
                   child: Card(
                     child: ListTile(
                       title: Text(q.stem),
-                      subtitle: Text('分类：${q.category} ｜ 难度：${q.difficultyStars} ｜ 完成度：${q.masteryScore}%'),
+                      subtitle: Text(
+                          '分类：${q.category} ｜ 难度：${q.difficultyStars} ｜ 完成度：${q.masteryScore}%'),
                       trailing: OutlinedButton(
                         onPressed: () async {
-                          final changed = await Navigator.of(context).push<bool>(
+                          final changed =
+                              await Navigator.of(context).push<bool>(
                             MaterialPageRoute(
                               builder: (_) => QuestionDetailPage(
                                 api: widget.api,
@@ -863,7 +1027,8 @@ class _QuestionsTabState extends State<QuestionsTab> {
                   Text('第 $page / $totalPages 页'),
                   const SizedBox(width: 8),
                   OutlinedButton(
-                    onPressed: page >= totalPages ? null : () => _changePage(page + 1),
+                    onPressed:
+                        page >= totalPages ? null : () => _changePage(page + 1),
                     child: const Text('下一页'),
                   ),
                 ],
@@ -933,8 +1098,10 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
   }
 
   List<FlSpot> _buildSpots() {
-    final sorted = [...records]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return List.generate(sorted.length, (i) => FlSpot(i.toDouble(), sorted[i].aiScore.toDouble()));
+    final sorted = [...records]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return List.generate(sorted.length,
+        (i) => FlSpot(i.toDouble(), sorted[i].aiScore.toDouble()));
   }
 
   @override
@@ -947,9 +1114,11 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
         children: [
           Text(question.stem, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          Text('分类：${question.category} ｜ 难度：${question.difficulty} ｜ 掌握度：${question.masteryScore}%'),
+          Text(
+              '分类：${question.category} ｜ 难度：${question.difficulty} ｜ 掌握度：${question.masteryScore}%'),
           const SizedBox(height: 10),
-          SelectableText('参考答案：\n${question.referenceAnswer.isEmpty ? "暂无" : question.referenceAnswer}'),
+          const Text('参考答案：'),
+          AppMarkdown(question.referenceAnswer.isEmpty ? '暂无' : question.referenceAnswer),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -967,8 +1136,12 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                       title: const Text('确认删除'),
                       content: const Text('确认删除这道题吗？'),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-                        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('删除')),
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('取消')),
+                        FilledButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('删除')),
                       ],
                     ),
                   );
@@ -985,30 +1158,42 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                     : () async {
                         setState(() => refreshingReference = true);
                         try {
-                          question = await widget.api.refreshQuestionReference(question.id);
+                          question = await widget.api
+                              .refreshQuestionReference(question.id);
                           changed = true;
                           editStemController.text = question.stem;
                           editCategoryController.text = question.category;
                           editDifficulty = question.difficulty;
                         } finally {
-                          if (mounted) setState(() => refreshingReference = false);
+                          if (mounted) {
+                            setState(() => refreshingReference = false);
+                          }
                         }
                       },
                 child: Text(refreshingReference ? '刷新中...' : '仅刷新参考答案'),
               ),
-              OutlinedButton(onPressed: _loadRecords, child: const Text('刷新做题记录')),
+              OutlinedButton(
+                  onPressed: _loadRecords, child: const Text('刷新做题记录')),
             ],
           ),
           if (editMode) ...[
             const SizedBox(height: 12),
-            TextField(controller: editStemController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: '题干')),
+            TextField(
+                controller: editStemController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: '题干')),
             const SizedBox(height: 8),
-            TextField(controller: editCategoryController, decoration: const InputDecoration(labelText: '分类')),
+            TextField(
+                controller: editCategoryController,
+                decoration: const InputDecoration(labelText: '分类')),
             const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               value: editDifficulty,
               decoration: const InputDecoration(labelText: '难度'),
-              items: [1, 2, 3, 4, 5].map((v) => DropdownMenuItem(value: v, child: Text('难度 $v'))).toList(),
+              items: [1, 2, 3, 4, 5]
+                  .map((v) => DropdownMenuItem(value: v, child: Text('难度 $v')))
+                  .toList(),
               onChanged: (v) => setState(() => editDifficulty = v ?? 3),
             ),
             const SizedBox(height: 8),
@@ -1018,7 +1203,9 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                 question = await widget.api.updateQuestion(
                   question.id,
                   stem: editStemController.text.trim(),
-                  category: editCategoryController.text.trim().isEmpty ? '未分类' : editCategoryController.text.trim(),
+                  category: editCategoryController.text.trim().isEmpty
+                      ? '未分类'
+                      : editCategoryController.text.trim(),
                   difficulty: editDifficulty,
                 );
                 changed = true;
@@ -1047,7 +1234,8 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                         question.id,
                         singleAnswerController.text.trim(),
                       );
-                      singleResult = '得分：${data.score}/10\n\n解析：\n${data.analysis}\n\n参考答案：\n${data.referenceAnswer}';
+                      singleResult =
+                          '得分：${data.score}/10\n\n解析：\n${data.analysis}\n\n参考答案：\n${data.referenceAnswer}';
                       await _loadRecords();
                       changed = true;
                     } finally {
@@ -1058,7 +1246,10 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
           ),
           if (singleResult != null) ...[
             const SizedBox(height: 8),
-            Card(child: Padding(padding: const EdgeInsets.all(12), child: Text(singleResult!))),
+            Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(singleResult!))),
           ],
           const SizedBox(height: 14),
           Text('历次得分趋势', style: Theme.of(context).textTheme.titleMedium),
@@ -1074,8 +1265,10 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                   maxY: 10,
                   gridData: const FlGridData(show: true),
                   titlesData: const FlTitlesData(
-                    topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles:
+                        AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles:
+                        AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   ),
                   lineBarsData: [
                     LineChartBarData(
@@ -1096,7 +1289,10 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
           Text('做题记录', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           if (recordsLoading)
-            const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
+            const Center(
+                child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator()))
           else if (records.isEmpty)
             const Text('暂无做题记录')
           else
@@ -1111,7 +1307,8 @@ class _QuestionDetailPageState extends State<QuestionDetailPage> {
                       const SizedBox(height: 4),
                       Text('用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
                       const SizedBox(height: 4),
-                      Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                      const Text('AI 解析：'),
+                      AppMarkdown(r.aiAnswer),
                       const SizedBox(height: 4),
                       Text('时间：${r.createdAt}'),
                     ],
@@ -1181,9 +1378,11 @@ class _PracticeTabState extends State<PracticeTab> {
       if (!mounted) return;
       setState(() {
         categories = data;
-        totalQuestionsAll = data.fold(0, (sum, item) => sum + item.totalQuestions);
+        totalQuestionsAll =
+            data.fold(0, (sum, item) => sum + item.totalQuestions);
         if (selectedCategory.isEmpty) {
-          final firstOk = data.where((e) => e.totalQuestions >= selectedCount).toList();
+          final firstOk =
+              data.where((e) => e.totalQuestions >= selectedCount).toList();
           selectedCategory = firstOk.isNotEmpty ? firstOk.first.category : '';
         }
       });
@@ -1197,23 +1396,32 @@ class _PracticeTabState extends State<PracticeTab> {
 
   bool get canStartPractice {
     if (selectedCategory.isEmpty) return totalQuestionsAll >= selectedCount;
-    final hit = categories.where((c) => c.category == selectedCategory).toList();
+    final hit =
+        categories.where((c) => c.category == selectedCategory).toList();
     return hit.isNotEmpty && hit.first.totalQuestions >= selectedCount;
   }
 
   bool get canStartMemorize {
     if (selectedCategory.isEmpty) return false;
-    final hit = categories.where((c) => c.category == selectedCategory).toList();
+    final hit =
+        categories.where((c) => c.category == selectedCategory).toList();
     return hit.isNotEmpty && hit.first.totalQuestions >= selectedCount;
   }
 
   QuestionItem? get currentQuestion =>
-      session == null || currentIndex >= session!.questions.length ? null : session!.questions[currentIndex];
+      session == null || currentIndex >= session!.questions.length
+          ? null
+          : session!.questions[currentIndex];
 
   QuestionItem? get currentMemorizeQuestion =>
-      memorizeIndex >= memorizeQuestions.length ? null : memorizeQuestions[memorizeIndex];
+      memorizeIndex >= memorizeQuestions.length
+          ? null
+          : memorizeQuestions[memorizeIndex];
 
-  bool get finished => session != null && currentIndex >= session!.questions.length && session!.questions.isNotEmpty;
+  bool get finished =>
+      session != null &&
+      currentIndex >= session!.questions.length &&
+      session!.questions.isNotEmpty;
 
   void _clearPracticeState() {
     session = null;
@@ -1338,7 +1546,8 @@ class _PracticeTabState extends State<PracticeTab> {
     if (!perQuestionResult.containsKey(current.id)) {
       setState(() => loading = true);
       try {
-        final data = await widget.api.skipPracticeAnswer(session!.sessionId, current.id);
+        final data =
+            await widget.api.skipPracticeAnswer(session!.sessionId, current.id);
         perQuestionResult[current.id] = data;
       } catch (e) {
         if (!mounted) return;
@@ -1363,8 +1572,10 @@ class _PracticeTabState extends State<PracticeTab> {
   @override
   Widget build(BuildContext context) {
     final current = currentQuestion;
-    final currentResult = current == null ? null : perQuestionResult[current.id];
-    final maxScore = (summary?.questionCount ?? session?.questions.length ?? 10) * 10;
+    final currentResult =
+        current == null ? null : perQuestionResult[current.id];
+    final maxScore =
+        (summary?.questionCount ?? session?.questions.length ?? 10) * 10;
     return Scaffold(
       appBar: AppBar(title: const Text('练习')),
       body: RefreshIndicator(
@@ -1382,12 +1593,16 @@ class _PracticeTabState extends State<PracticeTab> {
                     Row(
                       children: [
                         FilledButton(
-                          onPressed: mode == TrainMode.practice ? null : () => setState(() => mode = TrainMode.practice),
+                          onPressed: mode == TrainMode.practice
+                              ? null
+                              : () => setState(() => mode = TrainMode.practice),
                           child: const Text('刷题模式'),
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
-                          onPressed: mode == TrainMode.memorize ? null : () => setState(() => mode = TrainMode.memorize),
+                          onPressed: mode == TrainMode.memorize
+                              ? null
+                              : () => setState(() => mode = TrainMode.memorize),
                           child: const Text('背题模式'),
                         ),
                       ],
@@ -1400,7 +1615,8 @@ class _PracticeTabState extends State<PracticeTab> {
                             (n) => ChoiceChip(
                               label: Text('$n 题'),
                               selected: selectedCount == n,
-                              onSelected: (_) => setState(() => selectedCount = n),
+                              onSelected: (_) =>
+                                  setState(() => selectedCount = n),
                             ),
                           )
                           .toList(),
@@ -1409,7 +1625,9 @@ class _PracticeTabState extends State<PracticeTab> {
                     DropdownButtonFormField<String>(
                       value: selectedCategory,
                       items: [
-                        if (mode == TrainMode.practice) const DropdownMenuItem(value: '', child: Text('全部分类随机')),
+                        if (mode == TrainMode.practice)
+                          const DropdownMenuItem(
+                              value: '', child: Text('全部分类随机')),
                         ...categories.map(
                           (item) => DropdownMenuItem(
                             value: item.category,
@@ -1420,10 +1638,12 @@ class _PracticeTabState extends State<PracticeTab> {
                           ),
                         ),
                       ],
-                      onChanged: (v) => setState(() => selectedCategory = v ?? ''),
+                      onChanged: (v) =>
+                          setState(() => selectedCategory = v ?? ''),
                     ),
                     const SizedBox(height: 8),
-                    OutlinedButton(onPressed: _loadCategories, child: const Text('刷新分类')),
+                    OutlinedButton(
+                        onPressed: _loadCategories, child: const Text('刷新分类')),
                   ],
                 ),
               ),
@@ -1443,7 +1663,9 @@ class _PracticeTabState extends State<PracticeTab> {
                   child: Text('开始背题（$selectedCount 题）'),
                 ),
               ),
-            if (mode == TrainMode.memorize && memorizePrepared && memorizeIndex < memorizeQuestions.length) ...[
+            if (mode == TrainMode.memorize &&
+                memorizePrepared &&
+                memorizeIndex < memorizeQuestions.length) ...[
               const SizedBox(height: 12),
               Card(
                 child: Padding(
@@ -1451,11 +1673,13 @@ class _PracticeTabState extends State<PracticeTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('背题进度：第 ${memorizeIndex + 1} / ${memorizeQuestions.length} 题'),
+                      Text(
+                          '背题进度：第 ${memorizeIndex + 1} / ${memorizeQuestions.length} 题'),
                       const SizedBox(height: 8),
                       Text(currentMemorizeQuestion?.stem ?? ''),
                       const SizedBox(height: 8),
-                      Text('参考答案：\n${currentMemorizeQuestion?.referenceAnswer.isEmpty ?? true ? "暂无参考答案" : currentMemorizeQuestion!.referenceAnswer}'),
+                      Text(
+                          '参考答案：\n${currentMemorizeQuestion?.referenceAnswer.isEmpty ?? true ? "暂无参考答案" : currentMemorizeQuestion!.referenceAnswer}'),
                       const SizedBox(height: 10),
                       FilledButton(
                         onPressed: () => setState(() => memorizeIndex += 1),
@@ -1481,14 +1705,17 @@ class _PracticeTabState extends State<PracticeTab> {
                       const SizedBox(height: 8),
                       Text('将进入刷题模式，对刚才这 ${memorizeQuestions.length} 题进行乱序测验。'),
                       const SizedBox(height: 8),
-                      FilledButton(onPressed: _startQuizFromMemorize, child: const Text('开始测验')),
+                      FilledButton(
+                          onPressed: _startQuizFromMemorize,
+                          child: const Text('开始测验')),
                     ],
                   ),
                 ),
               ),
             ],
             if (current != null && !finished) ...[
-              Text('第 ${currentIndex + 1}/${session!.questions.length} 题', style: const TextStyle(fontSize: 16)),
+              Text('第 ${currentIndex + 1}/${session!.questions.length} 题',
+                  style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 8),
               Card(
                 child: Padding(
@@ -1532,11 +1759,13 @@ class _PracticeTabState extends State<PracticeTab> {
                       children: [
                         Text('得分：${currentResult.score} / 10'),
                         const SizedBox(height: 8),
-                        const Text('解析：', style: TextStyle(fontWeight: FontWeight.w600)),
-                        SelectableText(currentResult.analysis),
+                        const Text('解析：',
+                            style: TextStyle(fontWeight: FontWeight.w600)),
+                        AppMarkdown(currentResult.analysis),
                         const SizedBox(height: 8),
-                        const Text('参考答案：', style: TextStyle(fontWeight: FontWeight.w600)),
-                        SelectableText(currentResult.referenceAnswer),
+                        const Text('参考答案：',
+                            style: TextStyle(fontWeight: FontWeight.w600)),
+                        AppMarkdown(currentResult.referenceAnswer),
                       ],
                     ),
                   ),
@@ -1551,7 +1780,8 @@ class _PracticeTabState extends State<PracticeTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('本轮完成', style: TextStyle(fontWeight: FontWeight.w700)),
+                      const Text('本轮完成',
+                          style: TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 8),
                       Text('总分：${summary!.totalScore} / $maxScore'),
                       Text('记录ID：${summary!.recordIds.join(", ")}'),
@@ -1609,7 +1839,9 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
             return const AlertDialog(
-              content: SizedBox(height: 120, child: Center(child: CircularProgressIndicator())),
+              content: SizedBox(
+                  height: 120,
+                  child: Center(child: CircularProgressIndicator())),
             );
           }
           final data = snapshot.data!;
@@ -1633,8 +1865,10 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('评分：${r.aiScore}/10'),
-                              Text('用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
-                              Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                              Text(
+                                  '用户答案：${r.userAnswer.isEmpty ? "-" : r.userAnswer}'),
+                              const Text('AI 解析：'),
+                              AppMarkdown(r.aiAnswer),
                             ],
                           ),
                         ),
@@ -1644,7 +1878,11 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
                 ),
               ),
             ),
-            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'))
+            ],
           );
         },
       ),
@@ -1763,7 +2001,8 @@ class _AnswerRecordsTabState extends State<AnswerRecordsTab> {
                       width: 220,
                       child: TextField(
                         controller: dateController,
-                        decoration: const InputDecoration(labelText: '按记录日期筛选（YYYY-MM-DD）'),
+                        decoration: const InputDecoration(
+                            labelText: '按记录日期筛选（YYYY-MM-DD）'),
                       ),
                     ),
                     FilledButton(
@@ -1804,19 +2043,23 @@ class _AnswerRecordsTabState extends State<AnswerRecordsTab> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('${r.createdAt} ｜ ${r.sessionId == null ? "每日一题 / 无会话" : "训练会话 #${r.sessionId}"}'),
+                          Text(
+                              '${r.createdAt} ｜ ${r.sessionId == null ? "每日一题 / 无会话" : "训练会话 #${r.sessionId}"}'),
                           const SizedBox(height: 4),
                           Text('题目：${r.questionStem}'),
                           Text('得分：${r.aiScore}/10'),
                           const SizedBox(height: 4),
                           TextButton(
-                            onPressed: () => setState(() => expandedId = expandedId == r.id ? null : r.id),
+                            onPressed: () => setState(() =>
+                                expandedId = expandedId == r.id ? null : r.id),
                             child: Text(expandedId == r.id ? '收起' : '详情'),
                           ),
                           if (expandedId == r.id) ...[
-                            Text('作答：${r.userAnswer.isEmpty ? "（空，可能为跳过）" : r.userAnswer}'),
+                            Text(
+                                '作答：${r.userAnswer.isEmpty ? "（空，可能为跳过）" : r.userAnswer}'),
                             const SizedBox(height: 4),
-                            Text('AI 解析：${r.aiAnswer.isEmpty ? "-" : r.aiAnswer}'),
+                            const Text('AI 解析：'),
+                            AppMarkdown(r.aiAnswer),
                           ],
                         ],
                       ),
@@ -1851,7 +2094,8 @@ class _AnswerRecordsTabState extends State<AnswerRecordsTab> {
                   DropdownButton<int>(
                     value: pageSize,
                     items: const [15, 25, 50]
-                        .map((v) => DropdownMenuItem(value: v, child: Text('每页 $v')))
+                        .map((v) =>
+                            DropdownMenuItem(value: v, child: Text('每页 $v')))
                         .toList(),
                     onChanged: (v) {
                       if (v == null) return;
@@ -1875,7 +2119,8 @@ class ApiClient {
   final String baseUrl;
 
   Uri _uri(String path, [Map<String, dynamic>? query]) =>
-      Uri.parse('$baseUrl$path').replace(queryParameters: query?.map((k, v) => MapEntry(k, '$v')));
+      Uri.parse('$baseUrl$path')
+          .replace(queryParameters: query?.map((k, v) => MapEntry(k, '$v')));
 
   Future<http.Response> _guardedRequest(
     Future<http.Response> Function() request, {
@@ -1904,10 +2149,13 @@ class ApiClient {
       'sort_by': sortBy,
       'sort_order': sortOrder,
     });
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final jsonList = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
-    return jsonList.map((e) => QuestionItem.fromJson(e as Map<String, dynamic>)).toList();
+    return jsonList
+        .map((e) => QuestionItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<QuestionPage> fetchQuestionsPage({
@@ -1927,9 +2175,11 @@ class ApiClient {
       if (difficulty != null) 'difficulty': difficulty,
     };
     final uri = _uri('/api/questions/page', query);
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
-    return QuestionPage.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return QuestionPage.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<QuestionItem> createQuestion({
@@ -1940,15 +2190,17 @@ class ApiClient {
     final uri = _uri('/api/questions');
     final res = await _guardedRequest(
       () => http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'stem': stem, 'category': category, 'difficulty': difficulty}),
-    ),
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(
+            {'stem': stem, 'category': category, 'difficulty': difficulty}),
+      ),
       uri: uri,
       method: 'POST',
     );
     _check(res);
-    return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return QuestionItem.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<QuestionItem> updateQuestion(
@@ -1962,62 +2214,77 @@ class ApiClient {
       () => http.put(
         uri,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'stem': stem, 'category': category, 'difficulty': difficulty}),
+        body: jsonEncode(
+            {'stem': stem, 'category': category, 'difficulty': difficulty}),
       ),
       uri: uri,
       method: 'PUT',
     );
     _check(res);
-    return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return QuestionItem.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<void> deleteQuestion(int id) async {
     final uri = _uri('/api/questions/$id');
-    final res = await _guardedRequest(() => http.delete(uri), uri: uri, method: 'DELETE');
+    final res = await _guardedRequest(() => http.delete(uri),
+        uri: uri, method: 'DELETE');
     _check(res);
   }
 
   Future<QuestionItem> refreshQuestionReference(int id) async {
     final uri = _uri('/api/questions/$id/refresh-reference');
-    final res = await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
+    final res =
+        await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
     _check(res);
-    return QuestionItem.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return QuestionItem.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<List<PracticeRecordItem>> fetchQuestionRecords(int id) async {
     final uri = _uri('/api/questions/$id/records');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
-    return list.map((e) => PracticeRecordItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => PracticeRecordItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<PracticeSubmitResult> submitDailyPracticeAnswer(int questionId, String userAnswer) async {
+  Future<PracticeSubmitResult> submitDailyPracticeAnswer(
+      int questionId, String userAnswer) async {
     final uri = _uri('/api/practice/daily/submit');
     final res = await _guardedRequest(
       () => http.post(
         uri,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
+        body:
+            jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
       ),
       uri: uri,
       method: 'POST',
     );
     _check(res);
-    return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSubmitResult.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<List<String>> fetchCategoryNames() async {
     final uri = _uri('/api/categories');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
-    return list.map((e) => (e as Map<String, dynamic>)['name'] as String).toList();
+    return list
+        .map((e) => (e as Map<String, dynamic>)['name'] as String)
+        .toList();
   }
 
   Future<List<PracticeCategory>> fetchPracticeCategories() async {
     final uri = _uri('/api/practice/categories');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final map = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     return (map['categories'] as List<dynamic>)
@@ -2027,24 +2294,32 @@ class ApiClient {
 
   Future<PracticeActivityResponse> fetchPracticeActivity() async {
     final uri = _uri('/api/practice/activity');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
-    return PracticeActivityResponse.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeActivityResponse.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<List<PracticeSessionListItem>> fetchPracticeSessions() async {
     final uri = _uri('/api/practice/sessions');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
     final list = jsonDecode(utf8.decode(res.bodyBytes)) as List<dynamic>;
-    return list.map((e) => PracticeSessionListItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => PracticeSessionListItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<PracticeSessionRecordsResponse> fetchPracticeSessionRecords(int sessionId) async {
+  Future<PracticeSessionRecordsResponse> fetchPracticeSessionRecords(
+      int sessionId) async {
     final uri = _uri('/api/practice/sessions/$sessionId/records');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
-    return PracticeSessionRecordsResponse.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSessionRecordsResponse.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeRecordFeedPage> fetchPracticeRecordFeed({
@@ -2055,22 +2330,29 @@ class ApiClient {
     final uri = _uri('/api/practice/records', {
       'page': page,
       'page_size': pageSize,
-      if (shanghaiDate != null && shanghaiDate.isNotEmpty) 'shanghai_date': shanghaiDate,
+      if (shanghaiDate != null && shanghaiDate.isNotEmpty)
+        'shanghai_date': shanghaiDate,
     });
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
-    return PracticeRecordFeedPage.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeRecordFeedPage.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
-  Future<PracticeSession> startPracticeSession(String? category, int count) async {
+  Future<PracticeSession> startPracticeSession(
+      String? category, int count) async {
     final query = {'count': count, if (category != null) 'category': category};
     final uri = _uri('/api/practice/sessions/start', query);
-    final res = await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
+    final res =
+        await _guardedRequest(() => http.post(uri), uri: uri, method: 'POST');
     _check(res);
-    return PracticeSession.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSession.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
-  Future<PracticeSession> startPracticeSessionCustom(List<int> questionIds) async {
+  Future<PracticeSession> startPracticeSessionCustom(
+      List<int> questionIds) async {
     final uri = _uri('/api/practice/sessions/start/custom');
     final res = await _guardedRequest(
       () => http.post(
@@ -2082,44 +2364,52 @@ class ApiClient {
       method: 'POST',
     );
     _check(res);
-    return PracticeSession.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSession.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
-  Future<PracticeSubmitResult> submitPracticeAnswer(int sessionId, int questionId, String userAnswer) async {
+  Future<PracticeSubmitResult> submitPracticeAnswer(
+      int sessionId, int questionId, String userAnswer) async {
     final uri = _uri('/api/practice/sessions/$sessionId/submit');
     final res = await _guardedRequest(
       () => http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
-    ),
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body:
+            jsonEncode({'question_id': questionId, 'user_answer': userAnswer}),
+      ),
       uri: uri,
       method: 'POST',
     );
     _check(res);
-    return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSubmitResult.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
-  Future<PracticeSubmitResult> skipPracticeAnswer(int sessionId, int questionId) async {
+  Future<PracticeSubmitResult> skipPracticeAnswer(
+      int sessionId, int questionId) async {
     final uri = _uri('/api/practice/sessions/$sessionId/skip');
     final res = await _guardedRequest(
       () => http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'question_id': questionId}),
-    ),
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'question_id': questionId}),
+      ),
       uri: uri,
       method: 'POST',
     );
     _check(res);
-    return PracticeSubmitResult.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSubmitResult.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<PracticeSummary> fetchPracticeSummary(int sessionId) async {
     final uri = _uri('/api/practice/sessions/$sessionId/summary');
-    final res = await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
+    final res =
+        await _guardedRequest(() => http.get(uri), uri: uri, method: 'GET');
     _check(res);
-    return PracticeSummary.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+    return PracticeSummary.fromJson(
+        jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
   }
 
   void _check(http.Response res) {
@@ -2159,7 +2449,9 @@ class ApiException implements Exception {
       buf.writeln('responseBody: ${_shorten(responseBody!, 800)}');
     }
     if (cause != null) buf.writeln('cause: $cause');
-    if (stackTrace != null) buf.writeln('stack: ${_shorten(stackTrace.toString(), 1200)}');
+    if (stackTrace != null) {
+      buf.writeln('stack: ${_shorten(stackTrace.toString(), 1200)}');
+    }
     return buf.toString().trim();
   }
 }
@@ -2211,7 +2503,11 @@ class QuestionItem {
 }
 
 class QuestionPage {
-  QuestionPage({required this.total, required this.page, required this.pageSize, required this.items});
+  QuestionPage(
+      {required this.total,
+      required this.page,
+      required this.pageSize,
+      required this.items});
   final int total;
   final int page;
   final int pageSize;
@@ -2228,12 +2524,16 @@ class QuestionPage {
 }
 
 class PracticeCategory {
-  PracticeCategory({required this.category, required this.totalQuestions, required this.selectable});
+  PracticeCategory(
+      {required this.category,
+      required this.totalQuestions,
+      required this.selectable});
   final String category;
   final int totalQuestions;
   final bool selectable;
 
-  factory PracticeCategory.fromJson(Map<String, dynamic> json) => PracticeCategory(
+  factory PracticeCategory.fromJson(Map<String, dynamic> json) =>
+      PracticeCategory(
         category: json['category'] as String,
         totalQuestions: json['total_questions'] as int,
         selectable: json['selectable'] as bool,
@@ -2241,12 +2541,14 @@ class PracticeCategory {
 }
 
 class PracticeActivityDay {
-  PracticeActivityDay({required this.date, required this.count, required this.level});
+  PracticeActivityDay(
+      {required this.date, required this.count, required this.level});
   final String date;
   final int count;
   final int level;
 
-  factory PracticeActivityDay.fromJson(Map<String, dynamic> json) => PracticeActivityDay(
+  factory PracticeActivityDay.fromJson(Map<String, dynamic> json) =>
+      PracticeActivityDay(
         date: json['date'] as String? ?? '',
         count: json['count'] as int? ?? 0,
         level: json['level'] as int? ?? 0,
@@ -2265,7 +2567,8 @@ class PracticeActivityResponse {
   final int activeDays;
   final List<PracticeActivityDay> days;
 
-  factory PracticeActivityResponse.fromJson(Map<String, dynamic> json) => PracticeActivityResponse(
+  factory PracticeActivityResponse.fromJson(Map<String, dynamic> json) =>
+      PracticeActivityResponse(
         today: json['today'] as String? ?? '',
         totalQuestions: json['total_questions'] as int? ?? 0,
         activeDays: json['active_days'] as int? ?? 0,
@@ -2287,7 +2590,8 @@ class PracticeSessionListItem {
   final int questionCount;
   final String? completedAt;
 
-  factory PracticeSessionListItem.fromJson(Map<String, dynamic> json) => PracticeSessionListItem(
+  factory PracticeSessionListItem.fromJson(Map<String, dynamic> json) =>
+      PracticeSessionListItem(
         id: json['id'] as int? ?? 0,
         totalScore: json['total_score'] as int? ?? 0,
         questionCount: json['question_count'] as int? ?? 10,
@@ -2300,7 +2604,8 @@ class PracticeSession {
   final int sessionId;
   final List<QuestionItem> questions;
 
-  factory PracticeSession.fromJson(Map<String, dynamic> json) => PracticeSession(
+  factory PracticeSession.fromJson(Map<String, dynamic> json) =>
+      PracticeSession(
         sessionId: json['session_id'] as int,
         questions: (json['questions'] as List<dynamic>)
             .map((e) => QuestionItem.fromJson(e as Map<String, dynamic>))
@@ -2309,13 +2614,19 @@ class PracticeSession {
 }
 
 class PracticeSubmitResult {
-  PracticeSubmitResult({required this.score, required this.analysis, required this.referenceAnswer});
+  PracticeSubmitResult(
+      {required this.score,
+      required this.analysis,
+      required this.referenceAnswer});
   final int score;
   final String analysis;
   final String referenceAnswer;
 
-  factory PracticeSubmitResult.fromJson(Map<String, dynamic> json) => PracticeSubmitResult(
-        score: ((json['record'] as Map<String, dynamic>?)?['ai_score'] as int?) ?? 0,
+  factory PracticeSubmitResult.fromJson(Map<String, dynamic> json) =>
+      PracticeSubmitResult(
+        score:
+            ((json['record'] as Map<String, dynamic>?)?['ai_score'] as int?) ??
+                0,
         analysis: json['analysis'] as String,
         referenceAnswer: json['reference_answer'] as String? ?? '',
       );
@@ -2335,7 +2646,8 @@ class PracticeRecordItem {
   final int aiScore;
   final String createdAt;
 
-  factory PracticeRecordItem.fromJson(Map<String, dynamic> json) => PracticeRecordItem(
+  factory PracticeRecordItem.fromJson(Map<String, dynamic> json) =>
+      PracticeRecordItem(
         id: json['id'] as int,
         userAnswer: (json['user_answer'] as String?) ?? '',
         aiAnswer: (json['ai_answer'] as String?) ?? '',
@@ -2356,10 +2668,13 @@ class PracticeSummary {
   final List<int> recordIds;
   final int questionCount;
 
-  factory PracticeSummary.fromJson(Map<String, dynamic> json) => PracticeSummary(
+  factory PracticeSummary.fromJson(Map<String, dynamic> json) =>
+      PracticeSummary(
         sessionId: json['session_id'] as int? ?? 0,
         totalScore: json['total_score'] as int,
-        recordIds: (json['record_ids'] as List<dynamic>? ?? const []).map((e) => e as int).toList(),
+        recordIds: (json['record_ids'] as List<dynamic>? ?? const [])
+            .map((e) => e as int)
+            .toList(),
         questionCount: json['question_count'] as int? ?? 10,
       );
 }
@@ -2376,7 +2691,8 @@ class PracticeSessionRecordsResponse {
   final String? completedAt;
   final List<PracticeRecordItem> records;
 
-  factory PracticeSessionRecordsResponse.fromJson(Map<String, dynamic> json) => PracticeSessionRecordsResponse(
+  factory PracticeSessionRecordsResponse.fromJson(Map<String, dynamic> json) =>
+      PracticeSessionRecordsResponse(
         totalScore: json['total_score'] as int? ?? 0,
         questionCount: json['question_count'] as int? ?? 10,
         completedAt: json['completed_at'] as String?,
@@ -2404,7 +2720,8 @@ class PracticeRecordFeedItem {
   final int aiScore;
   final String createdAt;
 
-  factory PracticeRecordFeedItem.fromJson(Map<String, dynamic> json) => PracticeRecordFeedItem(
+  factory PracticeRecordFeedItem.fromJson(Map<String, dynamic> json) =>
+      PracticeRecordFeedItem(
         id: json['id'] as int? ?? 0,
         sessionId: json['session_id'] as int?,
         questionStem: json['question_stem'] as String? ?? '',
@@ -2420,10 +2737,12 @@ class PracticeRecordFeedPage {
   final int total;
   final List<PracticeRecordFeedItem> items;
 
-  factory PracticeRecordFeedPage.fromJson(Map<String, dynamic> json) => PracticeRecordFeedPage(
+  factory PracticeRecordFeedPage.fromJson(Map<String, dynamic> json) =>
+      PracticeRecordFeedPage(
         total: json['total'] as int? ?? 0,
         items: (json['items'] as List<dynamic>? ?? const [])
-            .map((e) => PracticeRecordFeedItem.fromJson(e as Map<String, dynamic>))
+            .map((e) =>
+                PracticeRecordFeedItem.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 }
