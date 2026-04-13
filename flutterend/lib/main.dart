@@ -143,19 +143,11 @@ class HomeTab extends StatefulWidget {
 class _HomeTabState extends State<HomeTab> {
   bool loading = true;
   String? error;
-  int total = 0;
   List<PracticeActivityDay> activityDays = [];
   String activityToday = '';
-  int activityTotalQuestions = 0;
-  int activityDaysCount = 0;
   List<PracticeSessionListItem> sessions = [];
   QuestionItem? dailyQuestion;
   int dailyQuestionRank = 0;
-  int? dailyDoneScore;
-
-  final dailyAnswerController = TextEditingController();
-  bool dailySubmitting = false;
-  PracticeSubmitResult? dailyResult;
 
   @override
   void initState() {
@@ -165,7 +157,6 @@ class _HomeTabState extends State<HomeTab> {
 
   @override
   void dispose() {
-    dailyAnswerController.dispose();
     super.dispose();
   }
 
@@ -202,26 +193,17 @@ class _HomeTabState extends State<HomeTab> {
       final today = _todayKey();
       QuestionItem? picked;
       var pickedRank = 0;
-      int? doneScore;
       if (allQuestions.isNotEmpty) {
         pickedRank = _fnv1a('$today|daily-v1') % allQuestions.length;
         picked = allQuestions[pickedRank];
-        final records = await widget.api.fetchQuestionRecords(picked.id);
-        final todayRecord =
-            records.where((r) => r.createdAt.startsWith(today)).toList();
-        if (todayRecord.isNotEmpty) doneScore = todayRecord.first.aiScore;
       }
       if (!mounted) return;
       setState(() {
-        total = allQuestions.length;
         activityDays = activity.days;
         activityToday = activity.today;
-        activityTotalQuestions = activity.totalQuestions;
-        activityDaysCount = activity.activeDays;
         sessions = sessionList;
         dailyQuestion = picked;
         dailyQuestionRank = pickedRank;
-        dailyDoneScore = doneScore;
       });
     } catch (e) {
       if (!mounted) return;
@@ -248,88 +230,21 @@ class _HomeTabState extends State<HomeTab> {
     return cols.sublist(cols.length - maxColumns);
   }
 
-  List<String> _monthLabels(List<List<PracticeActivityDay>> cols) {
+  List<({int index, String label})> _monthLabels(List<List<PracticeActivityDay>> cols) {
     var prev = '';
-    return cols.map((col) {
+    final result = <({int index, String label})>[];
+    for (var i = 0; i < cols.length; i++) {
+      final col = cols[i];
       final date = col.isEmpty ? '' : col.first.date;
-      if (date.length < 7) return '';
+      if (date.length < 7) continue;
       final key = date.substring(0, 7);
-      if (key == prev) return '';
+      if (key == prev) continue;
       prev = key;
       final month = int.tryParse(date.substring(5, 7)) ?? 1;
       const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      return names[(month - 1).clamp(0, 11)];
-    }).toList();
-  }
-
-  Future<void> _openDailyDialog() async {
-    if (dailyQuestion == null) return;
-    dailyAnswerController.clear();
-    dailyResult = null;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => AlertDialog(
-          title: const Text('每日一题作答'),
-          content: SizedBox(
-            width: 680,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('题目：${dailyQuestion!.stem}'),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: dailyAnswerController,
-                    minLines: 5,
-                    maxLines: 8,
-                    decoration: const InputDecoration(labelText: '输入你的答案'),
-                  ),
-                  if (dailyResult != null) ...[
-                    const SizedBox(height: 10),
-                    Text('得分：${dailyResult!.score} / 10'),
-                    const SizedBox(height: 6),
-                    const Text('解析：'),
-                    AppMarkdown(dailyResult!.analysis),
-                    const SizedBox(height: 6),
-                    const Text('参考答案：'),
-                    AppMarkdown(dailyResult!.referenceAnswer),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('关闭')),
-            FilledButton(
-              onPressed: dailySubmitting
-                  ? null
-                  : () async {
-                      if (dailyAnswerController.text.trim().isEmpty) return;
-                      setSheetState(() => dailySubmitting = true);
-                      try {
-                        final result =
-                            await widget.api.submitDailyPracticeAnswer(
-                          dailyQuestion!.id,
-                          dailyAnswerController.text.trim(),
-                        );
-                        dailyResult = result;
-                        dailyDoneScore = result.score;
-                      } finally {
-                        if (context.mounted) {
-                          setSheetState(() => dailySubmitting = false);
-                        }
-                      }
-                    },
-              child: Text(dailySubmitting ? '判题中...' : '提交并判题'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (mounted) setState(() {});
+      result.add((index: i, label: names[(month - 1).clamp(0, 11)]));
+    }
+    return result;
   }
 
   @override
@@ -377,14 +292,22 @@ class _HomeTabState extends State<HomeTab> {
                             Row(
                               children: [
                                 const SizedBox(width: labelWidth),
-                                ...months.map(
-                                  (m) => SizedBox(
-                                    width: colWidth,
-                                    child: Text(
-                                      m,
-                                      style: const TextStyle(fontSize: 9, color: Color(0xFF57606A)),
-                                      overflow: TextOverflow.visible,
-                                    ),
+                                SizedBox(
+                                  width: cols.length * colWidth,
+                                  height: 12,
+                                  child: Stack(
+                                    clipBehavior: Clip.none,
+                                    children: months
+                                        .map(
+                                          (m) => Positioned(
+                                            left: m.index * colWidth,
+                                            child: Text(
+                                              m.label,
+                                              style: const TextStyle(fontSize: 9, color: Color(0xFF57606A)),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
                                 ),
                               ],
@@ -449,14 +372,6 @@ class _HomeTabState extends State<HomeTab> {
                         SizedBox(width: 4),
                         Text('More', style: TextStyle(fontSize: 10, color: Color(0xFF57606A))),
                       ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        '色阶：0 灰 · 1-9 浅绿 · 10-19 中绿 · 20-49 深绿 · 50+ 最深绿',
-                        style: TextStyle(fontSize: 11, color: Color(0xFF6E7781)),
-                      ),
                     ),
                   ],
                 ),
@@ -524,20 +439,31 @@ class _HomeTabState extends State<HomeTab> {
                     if (dailyQuestion == null)
                       const Text('暂无题目，请先导入或新增题目。')
                     else ...[
-                      Text('今日题目：按题库 ID 升序第 ${dailyQuestionRank + 1} 题'),
-                      const SizedBox(height: 6),
-                      Text(dailyQuestion!.stem),
-                      const SizedBox(height: 6),
-                      Text(
-                          '分类：${dailyQuestion!.category} ｜ 难度：${dailyQuestion!.difficulty} ｜ 当前掌握：${dailyQuestion!.masteryScore}%'),
-                      if (dailyDoneScore != null) ...[
-                        const SizedBox(height: 6),
-                        Text('今日已完成（$dailyDoneScore/10）',
-                            style: const TextStyle(color: Color(0xFF1E7F3B))),
-                      ],
-                      const SizedBox(height: 8),
-                      FilledButton(
-                          onPressed: _openDailyDialog, child: const Text('做题')),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => DailyQuestionPage(
+                              api: widget.api,
+                              question: dailyQuestion!,
+                              rank: dailyQuestionRank + 1,
+                            ),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('题面：${dailyQuestion!.stem}'),
+                              const SizedBox(height: 6),
+                              Text('分类：${dailyQuestion!.category}'),
+                              Text('难度：${dailyQuestion!.difficulty}'),
+                              Text('掌握度：${dailyQuestion!.masteryScore}%'),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -545,6 +471,92 @@ class _HomeTabState extends State<HomeTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class DailyQuestionPage extends StatefulWidget {
+  const DailyQuestionPage({
+    super.key,
+    required this.api,
+    required this.question,
+    required this.rank,
+  });
+
+  final ApiClient api;
+  final QuestionItem question;
+  final int rank;
+
+  @override
+  State<DailyQuestionPage> createState() => _DailyQuestionPageState();
+}
+
+class _DailyQuestionPageState extends State<DailyQuestionPage> {
+  final answerController = TextEditingController();
+  bool submitting = false;
+  PracticeSubmitResult? result;
+
+  @override
+  void dispose() {
+    answerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (answerController.text.trim().isEmpty) return;
+    setState(() => submitting = true);
+    try {
+      final data = await widget.api.submitDailyPracticeAnswer(
+        widget.question.id,
+        answerController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() => result = data);
+    } finally {
+      if (mounted) {
+        setState(() => submitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('每日一题作答')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text('今日题目：第 ${widget.rank} 题'),
+          const SizedBox(height: 8),
+          Text('题面：${widget.question.stem}'),
+          const SizedBox(height: 8),
+          Text('分类：${widget.question.category}'),
+          Text('难度：${widget.question.difficulty}'),
+          Text('掌握度：${widget.question.masteryScore}%'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: answerController,
+            minLines: 5,
+            maxLines: 8,
+            decoration: const InputDecoration(labelText: '输入你的答案'),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: submitting ? null : _submit,
+            child: Text(submitting ? '判题中...' : '提交并判题'),
+          ),
+          if (result != null) ...[
+            const SizedBox(height: 12),
+            Text('得分：${result!.score} / 10'),
+            const SizedBox(height: 8),
+            const Text('解析：'),
+            AppMarkdown(result!.analysis),
+            const SizedBox(height: 8),
+            const Text('参考答案：'),
+            AppMarkdown(result!.referenceAnswer),
+          ],
+        ],
       ),
     );
   }
@@ -661,7 +673,6 @@ class _QuestionsTabState extends State<QuestionsTab> {
 
   Future<void> _loadBootstrap() async {
     setState(() {
-      loading = true;
       error = null;
     });
     try {
@@ -694,7 +705,7 @@ class _QuestionsTabState extends State<QuestionsTab> {
   }
 
   Future<void> _load({bool reset = false}) async {
-    if (loading || loadingMore) return;
+    if (loadingMore || (!reset && loading)) return;
     if (!reset && !hasMore) return;
     setState(() {
       if (reset) {
@@ -853,8 +864,6 @@ class _QuestionsTabState extends State<QuestionsTab> {
                 child: AppErrorText(error!),
               )
             else ...[
-              Text('当前页题数：${questions.length} / 总题数：$total'),
-              const SizedBox(height: 8),
               ...questions.map(
                 (q) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
@@ -1449,6 +1458,24 @@ class _PracticeTabState extends State<PracticeTab> {
     }
   }
 
+  Widget _buildStartButton() {
+    final isPractice = mode == TrainMode.practice;
+    final enabled = isPractice ? canStartPractice : canStartMemorize;
+    final onPressed = isPractice ? _startSession : _prepareMemorize;
+    return SizedBox(
+      width: 180,
+      height: 180,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          shape: const CircleBorder(),
+          textStyle: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+        ),
+        onPressed: enabled ? onPressed : null,
+        child: const Text('START'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final current = currentQuestion;
@@ -1465,91 +1492,79 @@ class _PracticeTabState extends State<PracticeTab> {
           padding: const EdgeInsets.all(16),
           children: [
             if (error != null) AppErrorText(error!),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    InkWell(
-                      onTap: () => setState(() => filterExpanded = !filterExpanded),
-                      child: Row(
-                        children: [
-                          const Text('训练设置', style: TextStyle(fontWeight: FontWeight.w700)),
-                          const Spacer(),
-                          Icon(filterExpanded ? Icons.expand_less : Icons.expand_more),
-                        ],
+            if (shouldShowStartOnly)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkWell(
+                        onTap: () => setState(() => filterExpanded = !filterExpanded),
+                        child: Row(
+                          children: [
+                            const Text('训练设置', style: TextStyle(fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            Icon(filterExpanded ? Icons.expand_less : Icons.expand_more),
+                          ],
+                        ),
                       ),
-                    ),
-                    if (filterExpanded) ...[
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          FilledButton(
-                            onPressed: mode == TrainMode.practice ? null : () => setState(() => mode = TrainMode.practice),
-                            child: const Text('刷题模式'),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton(
-                            onPressed: mode == TrainMode.memorize ? null : () => setState(() => mode = TrainMode.memorize),
-                            child: const Text('背题模式'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        children: sessionSizes
-                            .map(
-                              (n) => ChoiceChip(
-                                label: Text('$n 题'),
-                                selected: selectedCount == n,
-                                onSelected: (_) => setState(() => selectedCount = n),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        value: selectedCategory,
-                        items: [
-                          if (mode == TrainMode.practice) const DropdownMenuItem(value: '', child: Text('全部分类随机')),
-                          ...categories.map(
-                            (item) => DropdownMenuItem(
-                              value: item.category,
-                              enabled: item.totalQuestions >= selectedCount,
-                              child: Text(
-                                '${item.category}（${item.totalQuestions}题）${item.totalQuestions < selectedCount ? ' — 不足$selectedCount题' : ''}',
+                      if (filterExpanded) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            FilledButton(
+                              onPressed: mode == TrainMode.practice ? null : () => setState(() => mode = TrainMode.practice),
+                              child: const Text('刷题模式'),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: mode == TrainMode.memorize ? null : () => setState(() => mode = TrainMode.memorize),
+                              child: const Text('背题模式'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          children: sessionSizes
+                              .map(
+                                (n) => ChoiceChip(
+                                  label: Text('$n 题'),
+                                  selected: selectedCount == n,
+                                  onSelected: (_) => setState(() => selectedCount = n),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          value: selectedCategory,
+                          items: [
+                            if (mode == TrainMode.practice) const DropdownMenuItem(value: '', child: Text('全部分类随机')),
+                            ...categories.map(
+                              (item) => DropdownMenuItem(
+                                value: item.category,
+                                enabled: item.totalQuestions >= selectedCount,
+                                child: Text(
+                                  '${item.category}（${item.totalQuestions}题）${item.totalQuestions < selectedCount ? ' — 不足$selectedCount题' : ''}',
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() => selectedCategory = v ?? ''),
-                      ),
+                          ],
+                          onChanged: (v) => setState(() => selectedCategory = v ?? ''),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
             if (loading) const AppLoadingView(),
-            if (shouldShowStartOnly && mode == TrainMode.practice)
+            if (shouldShowStartOnly)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 80),
                 child: Center(
-                  child: FilledButton(
-                    onPressed: canStartPractice ? _startSession : null,
-                    child: Text('开始刷题（$selectedCount 题）'),
-                  ),
-                ),
-              ),
-            if (shouldShowStartOnly && mode == TrainMode.memorize)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 80),
-                child: Center(
-                  child: FilledButton(
-                    onPressed: canStartMemorize ? _prepareMemorize : null,
-                    child: Text('开始背题（$selectedCount 题）'),
-                  ),
+                  child: _buildStartButton(),
                 ),
               ),
             if (mode == TrainMode.memorize &&
@@ -1699,8 +1714,6 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
   bool loading = true;
   String? error;
   List<PracticeSessionListItem> sessions = [];
-  List<PracticeSessionListItem> filteredSessions = [];
-  String selectedDate = '';
 
   @override
   void initState() {
@@ -1715,36 +1728,11 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
     });
     try {
       sessions = await widget.api.fetchPracticeSessions();
-      filteredSessions = sessions;
     } catch (e) {
       error = _formatError(e);
     } finally {
       if (mounted) setState(() => loading = false);
     }
-  }
-
-  void _applyDateFilter() {
-    if (selectedDate.isEmpty) {
-      filteredSessions = sessions;
-    } else {
-      filteredSessions = sessions.where((s) => (s.completedAt ?? '').startsWith(selectedDate)).toList();
-    }
-  }
-
-  Future<void> _pickDate() async {
-    final d = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (d == null) return;
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    setState(() {
-      selectedDate = '${d.year}-$m-$day';
-      _applyDateFilter();
-    });
   }
 
   @override
@@ -1756,32 +1744,13 @@ class _PracticeHistoryTabState extends State<PracticeHistoryTab> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    OutlinedButton(onPressed: _pickDate, child: Text(selectedDate.isEmpty ? '按日期筛选' : selectedDate)),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: () => setState(() {
-                        selectedDate = '';
-                        _applyDateFilter();
-                      }),
-                      child: const Text('清空'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
             if (error != null) AppErrorText(error!),
             if (loading)
               const AppLoadingView()
-            else if (filteredSessions.isEmpty)
+            else if (sessions.isEmpty)
               const AppEmptyCard('暂无已完成刷题记录')
             else
-              ...filteredSessions.map(
+              ...sessions.map(
                 (s) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Card(
