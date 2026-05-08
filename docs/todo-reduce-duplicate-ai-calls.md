@@ -2,7 +2,7 @@
 
 对应总表：[feature-roadmap-tasks-and-tech.md §1](./feature-roadmap-tasks-and-tech.md)。
 
-**实现进度**：阶段 A、B、C、D 已在代码中落地（见下方 `[x]`）。
+**实现进度**：阶段 A、B、C、D 及 **§1 收尾增强** 已在代码中落地（见下方 `[x]`）。
 
 **目标**：在不换模型、不改 Ark 协议的前提下，少打「参考答案」等可缓存或可跳过的远程调用。
 
@@ -11,7 +11,7 @@
 - `backend/app/services/ai_service.py` — `call_doubao_reference_answer`（底层仍仅此一处调模型）
 - `backend/app/api/import_routes.py` — 导入入库
 - `backend/app/api/question_routes.py` — 手动建题、补全参考答案
-- `backend/app/api/practice_routes.py` — 阅卷（会话提交已有 409，核对文档即可）
+- `backend/app/api/practice_routes.py` — 阅卷（会话重复提交返回 200 + `grading_reused`）
 
 ---
 
@@ -26,7 +26,18 @@
 | A5 | **`POST /api/questions/backfill-reference-answers`**：单次请求内对 fingerprint 做 dict 去重，多条同题干只调一次 AI | `limit` 内含重复 stem 时调用次数减少 | `[x]` → `question_routes.py` |
 | A6 | **结构化日志**：在「跳过 AI」分支打 `logger.info`（`reason=already_present` / `batch_cache`） | 日志可 grep | `[x]` |
 
-**说明**：手动 `POST /api/questions` 创建题目当前无「自带参考答案」字段，仍每次生成；若后续增加可选 `reference_answer` 入参，再在 resolver 里接 `existing_reference` 即可。
+**说明**：`POST /api/questions` 已支持可选 **`reference_answer`**；非空则跳过 AI（经 `resolve_reference_for_stem`）。
+
+---
+
+## 阶段 E：§1 收尾（可选增强 → 已做）
+
+| Step | 任务 | 验收 | 状态 |
+|------|------|------|------|
+| E1 | **`POST /api/questions`** 请求体可选 `reference_answer` | 非空不调 `call_doubao_reference_answer` | `[x]` |
+| E2 | **会话 submit/skip 重复**：由 409 改为 **200** + 已有 `record` + `grading_reused=true` | 连点不报错、不调阅卷 | `[x]` |
+| E3 | **`import/preview` 前清理** `import_extract_cache` 过期行 | `delete` + `commit`，打 log | `[x]` |
+| E4 | **`ai_service` 统一 prepare/start 日志** | `ai_call_prepare` / `ai_call_start` 含长度字段 | `[x]` |
 
 ---
 
@@ -44,7 +55,7 @@
 
 | Step | 任务 | 验收 | 状态 |
 |------|------|------|------|
-| C1 | 确认 **`POST .../sessions/{id}/submit`** 已对 `session_id + question_id` 返回 **409** | 文档本页打勾；无需改代码则标「已满足」 | `[x]`（`practice_routes.submit_answer` 已存在） |
+| C1 | ~~409~~ **已演进**：同会话同题重复 submit/skip 返回 **200** + 已有 `record`、`grading_reused=true`（见阶段 E2） | 不再用 409 挡连点 | `[x]` |
 | C2 | **每日练习** `daily/submit`：同题 + 同 `user_answer` + `created_at` 在 `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` 内则复用上条阅卷，响应 `grading_reused=true` | 见 `practice_routes.submit_daily_answer` | `[x]` |
 
 ---
@@ -71,3 +82,4 @@
 | 2026-05-08 | 阶段 B：`import_extract_cache` + `import_preview` 按 chunk 缓存 + 环境变量 + `api-reference` |
 | 2026-05-08 | 阶段 C2：`daily/submit` 短时幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |
 | 2026-05-08 | 阶段 D 补全：README/api-design、ai-latency-and-streaming、pytest 基线、前端等待文案 |
+| 2026-05-08 | 阶段 E：手动建题可选参考答案、会话重复 200+grading_reused、预览前 purge、ai_call_prepare 日志、pytest |

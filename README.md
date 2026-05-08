@@ -16,7 +16,9 @@ Monorepo for interview question collection and training.
 
 ## 本地启动（前后端）
 
-日常开发需要**两个终端**，分别跑后端和前端。下面假设你已完成本节下方 **Quick Start** 里的一次性配置（虚拟环境、依赖、`backend/.env`、数据库迁移等）。
+日常开发需要**两个终端**，分别跑后端和前端。下面假设你已完成本节下方 **Quick Start** 里的一次性配置（虚拟环境、依赖、`backend/.env`、首次建库等）。
+
+**拉代码或切换分支后**：若包含数据库结构变更，请在启动后端前于 `backend` 目录执行 **`alembic upgrade head`**（详见 [Database Migration (Alembic)](#database-migration-alembic)），否则可能缺表、接口报错。
 
 | 服务 | 工作目录 | 说明 |
 |------|-----------|------|
@@ -103,26 +105,47 @@ copy .env.example .env
 
 ### Database Migration (Alembic)
 
-1. 先在 MySQL 里创建数据库（只建库，不用建表）：
+仓库已包含迁移脚本（`backend/alembic/versions/`）。**协作开发时只需把数据库升级到最新 revision**，不要对已有历史再跑 `revision --autogenerate` 覆盖。
+
+#### 日常：对齐到最新表结构（推荐每次开后端前执行）
+
+**PowerShell**（在 `backend` 目录、已激活虚拟环境）：
+
+```powershell
+cd "你的路径\Interview-Collector\backend"
+.\.venv\Scripts\Activate.ps1
+alembic upgrade head
+```
+
+**cmd.exe**：
+
+```bat
+cd /d "你的路径\Interview-Collector\backend"
+.\.venv\Scripts\activate.bat
+alembic upgrade head
+```
+
+成功时无报错；若已是最新 revision，通常只会打印当前上下文信息。然后按上文「终端 1」启动 `uvicorn`。
+
+#### 首次：本机还没有业务库时
+
+1. 在 MySQL 中**只建库**（表由 Alembic 创建）：
 
 ```sql
 CREATE DATABASE interviewCollector CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-2. 生成并执行迁移：
+2. 复制并编辑 `backend/.env`（至少配置 `DATABASE_URL` 指向上述库，见 `.env.example`）。
+
+3. 执行升级（应用仓库内全部迁移）：
 
 ```bash
 cd backend
 .\.venv\Scripts\activate
-alembic revision --autogenerate -m "init tables"
 alembic upgrade head
 ```
 
-3. 启动后端（命令与本文「本地启动（前后端）」一节中终端 1 相同）：
-
-```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
+4. **仅当你修改了 SQLAlchemy 模型并要提交新迁移时**（维护者）：再使用 `alembic revision --autogenerate -m "简短说明"`，人工检查生成的脚本后执行 `alembic upgrade head`。
 
 ### Frontend
 
@@ -236,7 +259,7 @@ flutter build apk --release --dart-define=API_BASE_URL=https://your-api-domain
   - `IMPORT_PREVIEW_CACHE_ENABLED`, `IMPORT_PREVIEW_CACHE_TTL_SECONDS` — cache AI extract per chunk on `POST /api/import/preview`.
   - `PRACTICE_DAILY_IDEMPOTENCY_ENABLED`, `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` — avoid repeat grading on `POST /api/practice/daily/submit` within the window.
 - Latency / streaming notes: [docs/ai-latency-and-streaming.md](docs/ai-latency-and-streaming.md).
-- Backend tests (dev): `cd backend`, `pip install -r requirements-dev.txt`, then `pytest`.
+- Backend tests (dev): `cd backend`, `pip install -r requirements-dev.txt`, then `pytest`.（pytest 会写入 `backend/.pytest_interview.db` 后删除，已加入 `.gitignore`。）
 
 ## Doubao (Volcengine Ark) Integration Notes
 

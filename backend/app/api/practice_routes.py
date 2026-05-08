@@ -273,7 +273,18 @@ def submit_answer(session_id: int, payload: PracticeSubmitRequest, db: Session =
         )
     )
     if existed:
-        raise HTTPException(status_code=409, detail="This question already submitted in current session")
+        logger.info(
+            "practice_submit skip_ai reason=session_duplicate session_id=%s question_id=%s record_id=%s",
+            session_id,
+            payload.question_id,
+            existed.id,
+        )
+        return {
+            "record": existed,
+            "analysis": existed.ai_answer,
+            "reference_answer": q.reference_answer,
+            "grading_reused": True,
+        }
 
     grading = call_doubao_grade(question_stem=q.stem, user_answer=payload.user_answer)
     record = PracticeRecord(
@@ -372,7 +383,18 @@ def skip_answer(session_id: int, payload: PracticeSkipRequest, db: Session = Dep
         )
     )
     if existed:
-        raise HTTPException(status_code=409, detail="This question already submitted in current session")
+        logger.info(
+            "practice_skip skip_duplicate session_id=%s question_id=%s record_id=%s",
+            session_id,
+            payload.question_id,
+            existed.id,
+        )
+        return {
+            "record": existed,
+            "analysis": existed.ai_answer,
+            "reference_answer": q.reference_answer,
+            "grading_reused": True,
+        }
 
     analysis = "未作答，记 0 分。建议先回忆核心要点后再复习参考答案。"
     record = PracticeRecord(

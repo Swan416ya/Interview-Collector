@@ -9,7 +9,15 @@ from app.api.question_routes import router as question_router
 from app.api.taxonomy_routes import router as taxonomy_router
 from app.core.config import settings
 from app.core.database import Base, engine
-from app.models import Category, Company, Question, QuestionCompany, QuestionRole, Role  # noqa: F401
+from app.models import (  # noqa: F401
+    Category,
+    Company,
+    ImportExtractCache,
+    Question,
+    QuestionCompany,
+    QuestionRole,
+    Role,
+)
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 

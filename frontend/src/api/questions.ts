@@ -14,6 +14,8 @@ export interface CreateQuestionPayload {
   stem: string;
   category: string;
   difficulty: number;
+  /** 非空时后端不调用 AI 生成参考答案 */
+  reference_answer?: string;
 }
 
 export interface QuestionFilters {

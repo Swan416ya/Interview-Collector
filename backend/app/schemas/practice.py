@@ -53,7 +53,10 @@ class PracticeSubmitResponse(BaseModel):
     reference_answer: str
     grading_reused: bool = Field(
         default=False,
-        description="True when daily submit returned a recent identical submission without calling the grader again",
+        description=(
+            "True when the grader was not invoked again: daily idempotent window replay, "
+            "or session submit for a question already answered in the same session (returns prior record)"
+        ),
     )
 
 

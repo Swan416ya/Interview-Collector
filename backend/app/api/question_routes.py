@@ -111,7 +111,12 @@ def _update_mastery_by_formula(question: Question, latest_score_0_10: int) -> No
 
 @router.post("", response_model=QuestionOut)
 def create_question(payload: QuestionCreate, db: Session = Depends(get_db)):
-    reference_answer = call_doubao_reference_answer(payload.stem)
+    raw_ref = (payload.reference_answer or "").strip()
+    reference_answer = resolve_reference_for_stem(
+        payload.stem,
+        existing_reference=raw_ref if raw_ref else None,
+        batch_cache=None,
+    )
     item = Question(
         stem=payload.stem,
         category=payload.category,

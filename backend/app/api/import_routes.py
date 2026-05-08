@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -32,6 +32,25 @@ def _preview_chunk_cache_key(prompt: str, chunk: str) -> str:
     h.update(b"\n\xffchunk_sep\xff\n")
     h.update(chunk.encode("utf-8"))
     return h.hexdigest()
+
+
+def _purge_expired_import_extract_cache(db: Session) -> int:
+    """Remove expired preview rows to keep the table small. Best-effort; ignores failures."""
+    if not settings.import_preview_cache_enabled:
+        return 0
+    try:
+        stmt = delete(ImportExtractCache).where(ImportExtractCache.expires_at < datetime.utcnow())
+        res = db.execute(stmt)
+        db.commit()
+        rc = res.rowcount
+        n = int(rc) if rc is not None and rc >= 0 else 0
+        if n:
+            logger.info("import_extract_cache purged_expired rows=%s", n)
+        return int(n)
+    except Exception:
+        logger.exception("import_extract_cache purge failed")
+        db.rollback()
+        return 0
 
 
 def _persist_extract_cache(db: Session, cache_key: str, ai_json: dict) -> None:
@@ -269,6 +288,7 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
 
     prompt = _build_extract_prompt(categories, roles)
     chunks = _split_text_for_extract(payload.raw_text, max_chars=1200)
+    _purge_expired_import_extract_cache(db)
     merged_questions: list[dict] = []
     seen_stems: set[str] = set()
     chunk_errors: list[dict] = []

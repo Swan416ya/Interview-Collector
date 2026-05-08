@@ -77,14 +77,15 @@ When any API is added/removed/changed, update this file in the same commit.
 - Method: `POST`
 - Path: `/api/questions`
 - Description: Create a new question
-- Note: backend will call AI to generate and save `reference_answer`
+- **参考答案**：若请求体中 **`reference_answer` 为非空字符串**，则直接使用该字段入库，**不调用**参考答案生成模型；省略或空字符串时仍由 AI 生成
 - Request body:
 
 ```json
 {
   "stem": "什么是进程和线程？",
   "category": "操作系统",
-  "difficulty": 3
+  "difficulty": 3,
+  "reference_answer": "可选：手写参考答案，非空则跳过 AI"
 }
 ```
 
@@ -235,9 +236,9 @@ When any API is added/removed/changed, update this file in the same commit.
   - save `PracticeRecord`
   - update question mastery score by formula:
     - `new_mastery = old_mastery * 0.7 + latest_score(0-100) * 0.3`
-  - 若该 `session_id` 下该 `question_id` 已有记录，返回 **409**（不重复阅卷）
+  - 若该 `session_id` 下该 `question_id` **已有作答或 skip 记录**，返回 **200** 与**已有** `PracticeRecord`（`analysis` / `ai_score` 与首次一致），**不再次调用**阅卷；`grading_reused=true`（与 daily 幂等语义一致）
 - Response:
-  - `grading_reused`：固定为 `false`（会话提交不使用短时复用）
+  - `grading_reused`：首次提交为 `false`；重复提交（连点或重放）为 `true`
 
 ### Daily Question Submit
 
@@ -276,7 +277,8 @@ When any API is added/removed/changed, update this file in the same commit.
   - when user clicks next without grading, record this question as skipped
   - create a practice record with `ai_score=0`
   - this 0 score is included in session total score and mastery update formula
-  - Response `grading_reused` 为 `false`
+  - 若该题在本会话已有记录，返回 **200** 与已有记录，`grading_reused=true`（不重复写入）
+  - 首次 skip 时 `grading_reused` 为 `false`
 
 ### Practice Session Summary
 

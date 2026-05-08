@@ -132,6 +132,13 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
         "thinking": {"type": thinking_type or settings.ai_thinking_type},
     }
 
+    logger.info(
+        "ai_call_prepare op=responses_extract prompt_len=%s user_text_len=%s thinking=%s",
+        len(prompt),
+        len(raw_text),
+        thinking_type or settings.ai_thinking_type,
+    )
+
     timeout = httpx.Timeout(
         timeout=settings.ai_timeout_seconds,
         connect=settings.ai_connect_timeout_seconds,
@@ -143,10 +150,11 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
     for attempt in range(settings.ai_retries + 1):
         started = time.perf_counter()
         logger.info(
-            "AI request start attempt=%s model=%s base_url=%s raw_text_len=%s",
+            "ai_call_start op=responses_extract attempt=%s model=%s base_url=%s prompt_len=%s user_text_len=%s",
             attempt + 1,
             settings.ai_model,
             settings.ai_base_url,
+            len(prompt),
             len(raw_text),
         )
         try:
@@ -235,6 +243,11 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
 
 
 def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
+    logger.info(
+        "ai_call_prepare op=grade stem_len=%s answer_len=%s",
+        len(question_stem),
+        len(user_answer),
+    )
     prompt = """
 你是计算机面试官。请对用户回答打分并给出解析。
 规则：
@@ -283,6 +296,7 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
 
 
 def call_doubao_reference_answer(question_stem: str) -> str:
+    logger.info("ai_call_prepare op=reference_answer stem_len=%s", len(question_stem))
     prompt = """
 你是计算机面试题参考答案生成器。
 规则：

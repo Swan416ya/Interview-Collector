@@ -7,6 +7,11 @@ class QuestionCreate(BaseModel):
     stem: str = Field(min_length=3)
     category: str = "未分类"
     difficulty: int = Field(default=3, ge=1, le=5)
+    reference_answer: str | None = Field(
+        default=None,
+        max_length=50000,
+        description="若传入非空字符串，则直接使用为参考答案，不调用 AI 生成",
+    )
 
 
 class QuestionUpdate(BaseModel):

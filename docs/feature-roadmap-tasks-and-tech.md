@@ -33,11 +33,11 @@
 
 | 序号 | 小项 | 验收标准（建议） |
 |------|------|------------------|
-| 1.1.1 | **参考答案**：入库/补全前若 `reference_answer` 已非空则**跳过** `call_doubao_reference_answer` | `import_commit_one`、批量 `import_commit`、`backfill-reference` 路径一致 |
+| 1.1.1 | **参考答案**：入库/补全前若 `reference_answer` 已非空则**跳过** `call_doubao_reference_answer` | 导入、`backfill`；**`POST /api/questions` 可选 `reference_answer`** 手写则跳过 AI |
 | 1.1.2 | **同一请求内去重**：批量导入中多条 **stem 规范化后相同** 只生成一次 reference，其余复用字符串 | 内存 dict 即可 MVP |
 | 1.1.3 | **抽取预览缓存** | 已实现：按 **SHA256(完整抽取 prompt + chunk)** 写入 `import_extract_cache`（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 B） |
-| 1.1.4 | **阅卷幂等** | 会话：`session_id + question_id` 已存在则 **409**；每日：`daily/submit` 在 `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` 内同题同答复用上条结果，**不调** `call_doubao_grade`，响应 `grading_reused`（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 C） |
-| 1.1.5 | **结构化日志（轻量）** | 每次 AI 调用打 log：`endpoint`、`stem_len`、是否命中「跳过」分支，便于自查浪费 |
+| 1.1.4 | **阅卷幂等** | 会话 submit/skip：同会话同题已有记录则 **200** 返回已有 `PracticeRecord`，`grading_reused=true`，不调阅卷；每日：`daily/submit` 时间窗同上（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 C） |
+| 1.1.5 | **结构化日志（轻量）** | `ai_service`：`ai_call_prepare` + `ai_call_start`（含 `prompt_len`/`user_text_len`/`stem_len`/`answer_len`）；缓存命中路径另有 `logger.info` |
 
 ### 1.2 技术栈与学习线索
 
@@ -305,4 +305,5 @@
 | 2026-05-08 | §1 链接 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md)；参考答案批量/补全去重已在代码落地 |
 | 2026-05-08 | §1.1.3：`import_extract_cache` + preview 按 chunk 缓存、`IMPORT_PREVIEW_CACHE_*`、前端提示 |
 | 2026-05-08 | §1.1.4：daily 短时阅卷幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |
+| 2026-05-08 | §1 收尾：`POST /questions` 可选参考答案、会话重复 200+`grading_reused`、预览前清理过期 extract 缓存、`ai_call_prepare` 日志、pytest |
 | 2026-05-08 | §12 基线 pytest + `ai-latency-and-streaming.md`；README / api-design 联调索引；todo 阶段 D 补全 |
