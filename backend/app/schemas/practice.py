@@ -51,6 +51,10 @@ class PracticeSubmitResponse(BaseModel):
     record: PracticeRecordOut
     analysis: str
     reference_answer: str
+    grading_reused: bool = Field(
+        default=False,
+        description="True when daily submit returned a recent identical submission without calling the grader again",
+    )
 
 
 class PracticeSessionSummaryResponse(BaseModel):

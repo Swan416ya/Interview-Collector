@@ -1,4 +1,7 @@
+import hashlib
+import json
 import logging
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -6,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.import_cache import ImportExtractCache
 from app.models.question import Question
 from app.models.taxonomy import Category, Company, QuestionCompany, QuestionRole, Role
 from app.schemas.importing import (
@@ -20,6 +24,33 @@ from app.services.reference_answer_resolver import resolve_reference_for_stem
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 logger = logging.getLogger(__name__)
+
+
+def _preview_chunk_cache_key(prompt: str, chunk: str) -> str:
+    h = hashlib.sha256()
+    h.update(prompt.encode("utf-8"))
+    h.update(b"\n\xffchunk_sep\xff\n")
+    h.update(chunk.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _persist_extract_cache(db: Session, cache_key: str, ai_json: dict) -> None:
+    ttl = max(60, int(settings.import_preview_cache_ttl_seconds))
+    expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+    payload = json.dumps(ai_json, ensure_ascii=False)
+    row = db.scalar(select(ImportExtractCache).where(ImportExtractCache.cache_key == cache_key))
+    if row:
+        row.payload_json = payload
+        row.expires_at = expires_at
+    else:
+        db.add(
+            ImportExtractCache(
+                cache_key=cache_key,
+                payload_json=payload,
+                expires_at=expires_at,
+            )
+        )
+    db.commit()
 
 
 def _fallback_category(category_names: set[str]) -> str:
@@ -242,10 +273,45 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
     seen_stems: set[str] = set()
     chunk_errors: list[dict] = []
     ai_raw_list: list[dict] = []
+    extract_cache_hits = 0
+    extract_cache_misses = 0
 
     for idx, chunk in enumerate(chunks):
         try:
-            ai_json, ai_raw = call_doubao_extract(prompt=prompt, raw_text=chunk)
+            cache_key = _preview_chunk_cache_key(prompt, chunk)
+            ai_json: dict | None = None
+            ai_raw: dict = {}
+
+            if settings.import_preview_cache_enabled:
+                cached = db.scalar(
+                    select(ImportExtractCache).where(
+                        ImportExtractCache.cache_key == cache_key,
+                        ImportExtractCache.expires_at > datetime.utcnow(),
+                    )
+                )
+                if cached is not None:
+                    try:
+                        ai_json = json.loads(cached.payload_json)
+                        extract_cache_hits += 1
+                        logger.info(
+                            "import_preview skip_ai reason=extract_cache chunk_index=%s",
+                            idx + 1,
+                        )
+                    except json.JSONDecodeError:
+                        db.delete(cached)
+                        db.commit()
+                        ai_json = None
+
+            if ai_json is None:
+                ai_json, ai_raw = call_doubao_extract(prompt=prompt, raw_text=chunk)
+                extract_cache_misses += 1
+                if settings.import_preview_cache_enabled:
+                    try:
+                        _persist_extract_cache(db, cache_key, ai_json)
+                    except Exception:
+                        logger.exception("import_preview extract_cache persist failed chunk_index=%s", idx + 1)
+                        db.rollback()
+
             if settings.ai_debug_raw_response:
                 ai_raw_list.append({"chunk_index": idx + 1, "raw": ai_raw})
             questions = ai_json.get("questions", [])
@@ -283,6 +349,8 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
         "chunk_count": len(chunks),
         "chunk_error_count": len(chunk_errors),
         "chunk_errors": chunk_errors,
+        "extract_cache_hits": extract_cache_hits,
+        "extract_cache_misses": extract_cache_misses,
     }
     if settings.ai_debug_raw_response:
         resp["ai_raw"] = ai_raw_list

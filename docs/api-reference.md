@@ -235,6 +235,9 @@ When any API is added/removed/changed, update this file in the same commit.
   - save `PracticeRecord`
   - update question mastery score by formula:
     - `new_mastery = old_mastery * 0.7 + latest_score(0-100) * 0.3`
+  - 若该 `session_id` 下该 `question_id` 已有记录，返回 **409**（不重复阅卷）
+- Response:
+  - `grading_reused`：固定为 `false`（会话提交不使用短时复用）
 
 ### Daily Question Submit
 
@@ -255,6 +258,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - create one `PracticeRecord` with `session_id = null`
   - return score/analysis/reference_answer
   - update mastery by the same formula
+  - **短时幂等（省重复阅卷）**：当 `PRACTICE_DAILY_IDEMPOTENCY_ENABLED=true`（默认）时，若存在另一条 `session_id` 为 null、`question_id` 与 `user_answer` 均相同、且 `created_at` 落在最近 `PRACTICE_DAILY_IDEMPOTENCY_SECONDS`（默认 60）秒内的记录，则**不再调用**阅卷模型，直接返回该条记录的分数与解析；响应中 `grading_reused=true`，**不**新建 `PracticeRecord`、**不**再次更新掌握度
 
 ### Skip Practice Answer (score 0)
 
@@ -272,6 +276,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - when user clicks next without grading, record this question as skipped
   - create a practice record with `ai_score=0`
   - this 0 score is included in session total score and mastery update formula
+  - Response `grading_reused` 为 `false`
 
 ### Practice Session Summary
 
@@ -362,9 +367,14 @@ When any API is added/removed/changed, update this file in the same commit.
 ```
 
 - Description:
-  - backend calls Doubao (Ark Responses API)
+  - backend calls Doubao (Ark Responses API) **per text chunk**（与 `_split_text_for_extract` 一致）
+  - 当 `IMPORT_PREVIEW_CACHE_ENABLED` 为 true（默认）时，对每个 chunk 使用 **SHA256(当前抽取 prompt + chunk 原文)** 查表 `import_extract_cache`；未过期则**不重复调用**抽取模型，直接复用 JSON
+  - TTL 由 `IMPORT_PREVIEW_CACHE_TTL_SECONDS` 控制（默认 1800 秒）；分类/岗位表变更会改变 prompt，缓存键自然失效
   - returns extracted `questions` JSON for user review
   - frontend should default-select all extracted questions
+- Response extra fields:
+  - `extract_cache_hits`：本请求中命中抽取缓存的 chunk 数
+  - `extract_cache_misses`：本请求中实际调用 AI 抽取的 chunk 数（缓存关闭时等于 `chunk_count`）
 
 ## Planned APIs (Next Iteration)
 

@@ -2,7 +2,7 @@
 
 对应总表：[feature-roadmap-tasks-and-tech.md §1](./feature-roadmap-tasks-and-tech.md)。
 
-**实现进度**：阶段 A（参考答案批量去重 + backfill 内去重 + 日志）已在代码中落地，见下方 `[x]`。阶段 B/C2/D 仍待做。
+**实现进度**：阶段 A、B、C、D 已在代码中落地（见下方 `[x]`）。
 
 **目标**：在不换模型、不改 Ark 协议的前提下，少打「参考答案」等可缓存或可跳过的远程调用。
 
@@ -34,9 +34,9 @@
 
 | Step | 任务 | 验收 | 状态 |
 |------|------|------|------|
-| B1 | 定义缓存键：`hashlib.sha256(f"{prompt_version}:{raw_text}".encode()).hexdigest()`（`prompt_version` 可用常量或 git short hash） | 文档写清版本 bump 规则 | `[ ]` |
-| B2 | 存储：`import_extract_cache` 表（`key`, `payload_json`, `expires_at`）或进程内 LRU（仅单机 dev） | 同一原文连续 preview 第二次不调 `call_doubao_extract` | `[ ]` |
-| B3 | `POST /api/import/preview`：先查缓存，命中直接返回；未命中写缓存 | TTL 建议 15–60 分钟 | `[ ]` |
+| B1 | 定义缓存键：`SHA256(当前完整抽取 prompt + 分隔符 + chunk 文本)`，与分类/岗位白名单联动 | 白名单变更即新 key | `[x]` |
+| B2 | 存储：`import_extract_cache` 表（`cache_key`, `payload_json`, `expires_at`） | Alembic `g9b0c1d2e3f4` | `[x]` |
+| B3 | `POST /api/import/preview`：按 chunk 查/写缓存；响应带 `extract_cache_hits` / `extract_cache_misses` | 默认 TTL 1800s，见 `IMPORT_PREVIEW_CACHE_*` | `[x]` |
 
 ---
 
@@ -45,7 +45,7 @@
 | Step | 任务 | 验收 | 状态 |
 |------|------|------|------|
 | C1 | 确认 **`POST .../sessions/{id}/submit`** 已对 `session_id + question_id` 返回 **409** | 文档本页打勾；无需改代码则标「已满足」 | `[x]`（`practice_routes.submit_answer` 已存在） |
-| C2 |（可选）**每日练习** `daily/submit`：若需防连点，再定义策略（如「同题同答案 60s 内返回上条结果」） | 产品确认后再做 | `[ ]` |
+| C2 | **每日练习** `daily/submit`：同题 + 同 `user_answer` + `created_at` 在 `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` 内则复用上条阅卷，响应 `grading_reused=true` | 见 `practice_routes.submit_daily_answer` | `[x]` |
 
 ---
 
@@ -64,3 +64,5 @@
 |------|------|
 | 2026-05-08 | 初版：分阶段 checklist |
 | 2026-05-08 | 阶段 A + C1 + D1/D2 已落地：`stem_norm`、`reference_answer_resolver`、import commit 批量缓存、backfill 内缓存、`api-reference` 说明 |
+| 2026-05-08 | 阶段 B：`import_extract_cache` + `import_preview` 按 chunk 缓存 + 环境变量 + `api-reference` |
+| 2026-05-08 | 阶段 C2：`daily/submit` 短时幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |

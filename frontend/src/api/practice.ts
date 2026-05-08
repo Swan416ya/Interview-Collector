@@ -32,6 +32,8 @@ export interface PracticeSubmitResponse {
   record: PracticeRecord;
   analysis: string;
   reference_answer: string;
+  /** 仅 daily/submit：时间窗内同题同答复用上条阅卷时为 true */
+  grading_reused?: boolean;
 }
 
 export interface PracticeSummaryResponse {

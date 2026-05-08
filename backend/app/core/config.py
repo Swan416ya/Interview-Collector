@@ -29,6 +29,10 @@ class Settings(BaseModel):
     ai_max_output_tokens: int = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "1200"))
     ai_debug_raw_response: bool = os.getenv("AI_DEBUG_RAW_RESPONSE", "false").lower() == "true"
     ai_thinking_type: str = os.getenv("AI_THINKING_TYPE", "disabled")
+    import_preview_cache_enabled: bool = os.getenv("IMPORT_PREVIEW_CACHE_ENABLED", "true").lower() == "true"
+    import_preview_cache_ttl_seconds: int = int(os.getenv("IMPORT_PREVIEW_CACHE_TTL_SECONDS", "1800"))
+    practice_daily_idempotency_enabled: bool = os.getenv("PRACTICE_DAILY_IDEMPOTENCY_ENABLED", "true").lower() == "true"
+    practice_daily_idempotency_seconds: int = int(os.getenv("PRACTICE_DAILY_IDEMPOTENCY_SECONDS", "60"))
 
 
 settings = Settings()

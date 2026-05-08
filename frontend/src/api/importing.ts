@@ -18,6 +18,13 @@ export interface ImportPreviewResponse {
   questions: PreviewQuestionItem[];
   allowed_categories: string[];
   allowed_roles: string[];
+  chunk_count?: number;
+  chunk_error_count?: number;
+  chunk_errors?: unknown[];
+  /** 本请求命中 import 抽取缓存的 chunk 数 */
+  extract_cache_hits?: number;
+  /** 本请求实际调用 AI 抽取的 chunk 数 */
+  extract_cache_misses?: number;
 }
 
 export interface ImportCommitResponse {

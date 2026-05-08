@@ -35,8 +35,8 @@
 |------|------|------------------|
 | 1.1.1 | **参考答案**：入库/补全前若 `reference_answer` 已非空则**跳过** `call_doubao_reference_answer` | `import_commit_one`、批量 `import_commit`、`backfill-reference` 路径一致 |
 | 1.1.2 | **同一请求内去重**：批量导入中多条 **stem 规范化后相同** 只生成一次 reference，其余复用字符串 | 内存 dict 即可 MVP |
-| 1.1.3 | **抽取预览缓存（可选）** | 对 `(prompt_version, SHA256(raw_text))` 缓存最近一次 `preview` 的 JSON（DB 表或 Redis + TTL），避免用户连点预览重复扣费 |
-| 1.1.4 | **阅卷幂等（可选）** | 同一 `session_id + question_id` 已存在 `practice_records` 且客户端重复提交时，返回已有分数或显式 409，避免重复调用 `call_doubao_grade` |
+| 1.1.3 | **抽取预览缓存** | 已实现：按 **SHA256(完整抽取 prompt + chunk)** 写入 `import_extract_cache`（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 B） |
+| 1.1.4 | **阅卷幂等** | 会话：`session_id + question_id` 已存在则 **409**；每日：`daily/submit` 在 `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` 内同题同答复用上条结果，**不调** `call_doubao_grade`，响应 `grading_reused`（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 C） |
 | 1.1.5 | **结构化日志（轻量）** | 每次 AI 调用打 log：`endpoint`、`stem_len`、是否命中「跳过」分支，便于自查浪费 |
 
 ### 1.2 技术栈与学习线索
@@ -303,3 +303,5 @@
 | 2026-05-08 | 初版：按功能拆解小项 + 技术栈与学习线索 |
 | 2026-05-08 | **重排**：章节顺序 = 实现优先级；§1 减重复 AI；RAG 提前；错题准入准出；阅卷会话总评+雷达；全局雷达后挪；去重后挪；明确暂不换模型 |
 | 2026-05-08 | §1 链接 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md)；参考答案批量/补全去重已在代码落地 |
+| 2026-05-08 | §1.1.3：`import_extract_cache` + preview 按 chunk 缓存、`IMPORT_PREVIEW_CACHE_*`、前端提示 |
+| 2026-05-08 | §1.1.4：daily 短时阅卷幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |

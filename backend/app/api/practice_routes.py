@@ -1,3 +1,4 @@
+import logging
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
@@ -23,9 +24,11 @@ from app.schemas.practice import (
     PracticeSubmitResponse,
     PracticeSubmitRequest,
 )
+from app.core.config import settings
 from app.services.ai_service import call_doubao_grade
 
 router = APIRouter(prefix="/api/practice", tags=["practice"])
+logger = logging.getLogger(__name__)
 
 try:
     _ACTIVITY_TZ = zoneinfo.ZoneInfo("Asia/Shanghai")
@@ -289,7 +292,12 @@ def submit_answer(session_id: int, payload: PracticeSubmitRequest, db: Session =
 
     db.commit()
     db.refresh(record)
-    return {"record": record, "analysis": grading["analysis"], "reference_answer": q.reference_answer}
+    return {
+        "record": record,
+        "analysis": grading["analysis"],
+        "reference_answer": q.reference_answer,
+        "grading_reused": False,
+    }
 
 
 @router.post("/daily/submit", response_model=PracticeSubmitResponse)
@@ -297,6 +305,33 @@ def submit_daily_answer(payload: PracticeSubmitRequest, db: Session = Depends(ge
     q = db.get(Question, payload.question_id)
     if not q:
         raise HTTPException(status_code=404, detail="Question not found")
+
+    if settings.practice_daily_idempotency_enabled:
+        window_s = max(1, int(settings.practice_daily_idempotency_seconds))
+        cutoff = datetime.utcnow() - timedelta(seconds=window_s)
+        recent = db.scalar(
+            select(PracticeRecord)
+            .where(
+                PracticeRecord.session_id.is_(None),
+                PracticeRecord.question_id == payload.question_id,
+                PracticeRecord.user_answer == payload.user_answer,
+                PracticeRecord.created_at >= cutoff,
+            )
+            .order_by(PracticeRecord.id.desc())
+        )
+        if recent is not None:
+            logger.info(
+                "daily_submit skip_ai reason=idempotent_window question_id=%s record_id=%s window_s=%s",
+                payload.question_id,
+                recent.id,
+                window_s,
+            )
+            return {
+                "record": recent,
+                "analysis": recent.ai_answer,
+                "reference_answer": q.reference_answer,
+                "grading_reused": True,
+            }
 
     grading = call_doubao_grade(question_stem=q.stem, user_answer=payload.user_answer)
     record = PracticeRecord(
@@ -313,7 +348,12 @@ def submit_daily_answer(payload: PracticeSubmitRequest, db: Session = Depends(ge
 
     db.commit()
     db.refresh(record)
-    return {"record": record, "analysis": grading["analysis"], "reference_answer": q.reference_answer}
+    return {
+        "record": record,
+        "analysis": grading["analysis"],
+        "reference_answer": q.reference_answer,
+        "grading_reused": False,
+    }
 
 
 @router.post("/sessions/{session_id}/skip", response_model=PracticeSubmitResponse)
@@ -351,7 +391,12 @@ def skip_answer(session_id: int, payload: PracticeSkipRequest, db: Session = Dep
 
     db.commit()
     db.refresh(record)
-    return {"record": record, "analysis": analysis, "reference_answer": q.reference_answer}
+    return {
+        "record": record,
+        "analysis": analysis,
+        "reference_answer": q.reference_answer,
+        "grading_reused": False,
+    }
 
 
 @router.get("/sessions/{session_id}/summary", response_model=PracticeSessionSummaryResponse)

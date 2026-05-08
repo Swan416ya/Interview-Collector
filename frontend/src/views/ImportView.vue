@@ -19,6 +19,8 @@ const importSummary = ref<{ ok: number; err: number } | null>(null);
 const error = ref("");
 const errorDetail = ref("");
 const previewing = ref(false);
+/** 最近一次预览的抽取缓存统计（后端 extract_cache_*） */
+const previewCacheHint = ref("");
 const committing = ref(false);
 const currentImportIndex = ref(0);
 const currentImportTotal = ref(0);
@@ -61,8 +63,17 @@ async function runPreview() {
   error.value = "";
   errorDetail.value = "";
   importSummary.value = null;
+  previewCacheHint.value = "";
   try {
     const data = await previewImport(rawText.value.trim());
+    const hits = data.extract_cache_hits;
+    const misses = data.extract_cache_misses;
+    if (typeof hits === "number" && typeof misses === "number") {
+      previewCacheHint.value =
+        hits > 0
+          ? `抽取缓存命中 ${hits} 个分段，实际调用 AI ${misses} 次（相同原文重复预览可省钱）。`
+          : `未命中抽取缓存，实际调用 AI ${misses} 次。`;
+    }
     previewItems.value = data.questions;
     selected.value = data.questions.map(() => true);
     rowStatus.value = data.questions.map(() => "idle" as ImportRowStatus);
@@ -153,6 +164,12 @@ function toggleAll(checked: boolean) {
       <button @click="toggleAll(false)" :disabled="!previewItems.length">全不选</button>
     </div>
     <LoadingIndicator v-if="previewing" text="AI 正在解析原文..." />
+    <p
+      v-if="previewCacheHint"
+      style="margin-top: 8px; color: #555; font-size: 14px;"
+    >
+      {{ previewCacheHint }}
+    </p>
 
     <h3 style="margin-top: 16px;">提取结果（默认全选）</h3>
     <p v-if="!previewItems.length">暂无提取结果，请先点击“AI 提取预览”。</p>
