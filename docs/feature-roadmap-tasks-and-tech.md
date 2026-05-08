@@ -276,7 +276,7 @@
 
 | 序号 | 小项 | 验收标准（建议） |
 |------|------|------------------|
-| 12.1.1 | **pytest** 覆盖缓存分支、RAG 检索、错题状态机 |  |
+| 12.1.1 | **pytest** 覆盖缓存分支、RAG 检索、错题状态机 | 基线：`backend/requirements-dev.txt` + `tests/test_stem_norm.py`、 `tests/test_reference_answer_resolver.py`（`cd backend && pytest`） |
 | 12.1.2 | API 变更同步 **`docs/api-reference.md`** | 仓库约定 |
 
 ### 12.2 技术栈与学习线索
@@ -305,3 +305,4 @@
 | 2026-05-08 | §1 链接 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md)；参考答案批量/补全去重已在代码落地 |
 | 2026-05-08 | §1.1.3：`import_extract_cache` + preview 按 chunk 缓存、`IMPORT_PREVIEW_CACHE_*`、前端提示 |
 | 2026-05-08 | §1.1.4：daily 短时阅卷幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |
+| 2026-05-08 | §12 基线 pytest + `ai-latency-and-streaming.md`；README / api-design 联调索引；todo 阶段 D 补全 |

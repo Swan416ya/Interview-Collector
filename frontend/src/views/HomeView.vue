@@ -373,7 +373,10 @@ async function submitDailyAnswer() {
               {{ dailySubmitting ? "判题中..." : "提交并判题" }}
             </button>
           </div>
-          <LoadingIndicator v-if="dailySubmitting" text="AI 正在判题..." />
+          <LoadingIndicator
+            v-if="dailySubmitting"
+            text="AI 正在判题（约 10–30 秒；勿重复点击）"
+          />
           <div v-if="dailyResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
             <p><strong>得分：</strong>{{ dailyResult.score }} / 10</p>
             <div>

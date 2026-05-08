@@ -347,7 +347,10 @@ onMounted(loadCategories);
         <button @click="submitCurrent" :disabled="submitting">{{ submitting ? "判题中..." : "提交并判题" }}</button>
         <button @click="nextQuestion">下一题</button>
       </div>
-      <LoadingIndicator v-if="submitting" text="AI 正在判题..." />
+      <LoadingIndicator
+        v-if="submitting"
+        text="AI 正在判题（云端约 10–30 秒，请稍候；勿重复点击）"
+      />
 
       <div v-if="perQuestionResult[currentQuestion.id]" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
         <p><strong>得分：</strong>{{ perQuestionResult[currentQuestion.id].score }} / 10</p>

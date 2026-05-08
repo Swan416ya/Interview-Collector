@@ -374,7 +374,10 @@ onMounted(async () => {
                 {{ singlePracticeSubmitting ? "判题中..." : "提交并判题" }}
               </button>
             </div>
-            <LoadingIndicator v-if="singlePracticeSubmitting" text="AI 正在判题..." />
+            <LoadingIndicator
+              v-if="singlePracticeSubmitting"
+              text="AI 正在判题（约 10–30 秒；勿重复点击）"
+            />
             <div v-if="singlePracticeResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
               <p><strong>得分：</strong>{{ singlePracticeResult.score }} / 10</p>
               <div>

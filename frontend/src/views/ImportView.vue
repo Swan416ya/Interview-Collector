@@ -163,7 +163,10 @@ function toggleAll(checked: boolean) {
       <button @click="toggleAll(true)" :disabled="!previewItems.length">全选</button>
       <button @click="toggleAll(false)" :disabled="!previewItems.length">全不选</button>
     </div>
-    <LoadingIndicator v-if="previewing" text="AI 正在解析原文..." />
+    <LoadingIndicator
+      v-if="previewing"
+      text="AI 正在解析原文（按分段调用，约 10–40 秒；勿重复点击）"
+    />
     <p
       v-if="previewCacheHint"
       style="margin-top: 8px; color: #555; font-size: 14px;"

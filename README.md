@@ -229,6 +229,15 @@ flutter build apk --release --dart-define=API_BASE_URL=https://your-api-domain
 - Primary API doc file: `docs/api-reference.md`
 - Rule: every backend API change must update this file in the same commit
 
+## Reduce duplicate AI calls & env quick reference
+
+- Step-by-step checklist: [docs/todo-reduce-duplicate-ai-calls.md](docs/todo-reduce-duplicate-ai-calls.md) (links back to [docs/feature-roadmap-tasks-and-tech.md](docs/feature-roadmap-tasks-and-tech.md) §1).
+- Optional env vars (see `backend/.env.example` for defaults):
+  - `IMPORT_PREVIEW_CACHE_ENABLED`, `IMPORT_PREVIEW_CACHE_TTL_SECONDS` — cache AI extract per chunk on `POST /api/import/preview`.
+  - `PRACTICE_DAILY_IDEMPOTENCY_ENABLED`, `PRACTICE_DAILY_IDEMPOTENCY_SECONDS` — avoid repeat grading on `POST /api/practice/daily/submit` within the window.
+- Latency / streaming notes: [docs/ai-latency-and-streaming.md](docs/ai-latency-and-streaming.md).
+- Backend tests (dev): `cd backend`, `pip install -r requirements-dev.txt`, then `pytest`.
+
 ## Doubao (Volcengine Ark) Integration Notes
 
 - Current project env already switched to Ark-compatible defaults:

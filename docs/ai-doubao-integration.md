@@ -1,5 +1,9 @@
 # Doubao (Volcengine Ark) Integration Guide
 
+## 0. Latency and streaming
+
+See [ai-latency-and-streaming.md](./ai-latency-and-streaming.md) for why calls can take 10–30s, UX mitigations, and when true SSE streaming would require API changes.
+
 ## 1. Environment Variables
 
 Set in `backend/.env`:

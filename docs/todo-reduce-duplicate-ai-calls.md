@@ -53,8 +53,12 @@
 
 | Step | 任务 | 验收 | 状态 |
 |------|------|------|------|
-| D1 | 若 API 行为或响应字段有变，更新 **`docs/api-reference.md`** | CI/人工对照 | `[x]`（已补充 commit / backfill 行为说明） |
-| D2 | 在 [feature-roadmap-tasks-and-tech.md](./feature-roadmap-tasks-and-tech.md) §1 小项表可加「见 todo-reduce-duplicate-ai-calls」 | 双向链接 | `[x]` |
+| D1 | 若 API 行为或响应字段有变，更新 **`docs/api-reference.md`** | CI/人工对照 | `[x]` |
+| D2 | 在 [feature-roadmap-tasks-and-tech.md](./feature-roadmap-tasks-and-tech.md) §1 链到本 todo | 双向链接 | `[x]` |
+| D3 | **README**：增加「减负 / 联调」索引（本 todo、`api-reference`、相关 `IMPORT_*` / `PRACTICE_*` 环境变量） | 新开发者可按表配置 | `[x]` |
+| D4 | **`docs/api-design.md`**：声明「已实现契约以 `api-reference` 为准」并链到减负与延迟说明 | 不与 api-reference 打架 | `[x]` |
+| D5 | **`docs/ai-latency-and-streaming.md`**：延迟原因、流式可行性、体感优化与后续清单 | 见该文 | `[x]` |
+| D6 | **pytest 基线**：`requirements-dev.txt` + `tests/test_stem_norm.py`、`tests/test_reference_answer_resolver.py` | `cd backend && pip install -r requirements-dev.txt && pytest` 通过 | `[x]` |
 
 ---
 
@@ -66,3 +70,4 @@
 | 2026-05-08 | 阶段 A + C1 + D1/D2 已落地：`stem_norm`、`reference_answer_resolver`、import commit 批量缓存、backfill 内缓存、`api-reference` 说明 |
 | 2026-05-08 | 阶段 B：`import_extract_cache` + `import_preview` 按 chunk 缓存 + 环境变量 + `api-reference` |
 | 2026-05-08 | 阶段 C2：`daily/submit` 短时幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |
+| 2026-05-08 | 阶段 D 补全：README/api-design、ai-latency-and-streaming、pytest 基线、前端等待文案 |
