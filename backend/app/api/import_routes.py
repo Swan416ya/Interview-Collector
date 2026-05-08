@@ -20,6 +20,7 @@ from app.schemas.importing import (
 )
 from app.core.stem_norm import stem_fingerprint
 from app.services.ai_service import call_doubao_extract
+from app.services.kb_chunk_service import sync_question_chunks
 from app.services.reference_answer_resolver import resolve_reference_for_stem
 
 router = APIRouter(prefix="/api/import", tags=["import"])
@@ -174,6 +175,7 @@ def _insert_single_import_question(
         "linked_companies": linked_companies,
         "created_companies": created_companies,
     }
+    sync_question_chunks(db, q)
     return q, stats
 
 

@@ -51,20 +51,22 @@
 
 ## 2. 知识库检索与对话（RAG Copilot，高优先级）
 
+**分步执行清单（勾选与备注）**：[todo-rag-knowledge-copilot.md](./todo-rag-knowledge-copilot.md)。
+
 **业务目标**：尽快打通「**自己的题库文本 → 检索 → 带引用回答**」；多轮与向量后补。
 
 ### 2.1 小项清单
 
-| 序号 | 小项 | 验收标准（建议） |
-|------|------|------------------|
-| 2.1.1 | **片段表** `document_chunks` | `question_id`、`text`、`metadata` JSON；Alembic 迁移 |
-| 2.1.2 | **写入路径**：题目创建/更新、导入成功写入 DB 时，**同步切块写入** chunks（题干一段、参考答案一段等） | 可先仅题干+参考，保证有检索料 |
-| 2.1.3 | **关键词检索 MVP** | MySQL **FULLTEXT** 或过渡 `LIKE`；`MATCH ... AGAINST` + `text()` |
-| 2.1.4 | `POST /api/kb/query` | 入参：`query`、`top_k`；出参：`answer` + `citations[]`（`question_id` / `chunk_id` + 摘录） |
-| 2.1.5 | **Prompt**：无相关片段则拒答或明确「库中未找到」 | 降低胡编 |
-| 2.1.6 | **前端 Copilot 页** | Pinia + 新 View；展示引用列表；Markdown 用 **marked** + **DOMPurify** |
-| 2.1.7 | **向量检索（可选，RAG 增强）** | 云端 embedding + 相似度排序，与关键词结果融合 |
-| 2.1.8 | **多轮 + SSE（可选）** | `kb_threads` / `kb_messages`；`StreamingResponse` |
+| 序号 | 小项 | 验收标准（建议） | 状态 |
+|------|------|------------------|------|
+| 2.1.1 | **片段表** `document_chunks` | `question_id`、`text`、JSON 元数据（`chunk_meta`）；Alembic 迁移 | √ |
+| 2.1.2 | **写入路径**：题目创建/更新、导入成功写入 DB 时，**同步切块写入** chunks（题干一段、参考答案一段等） | 可先仅题干+参考，保证有检索料 | √ |
+| 2.1.3 | **关键词检索 MVP** | MySQL **FULLTEXT** + 无命中时 **LIKE/contains**；SQLite 走 contains | √ |
+| 2.1.4 | `POST /api/kb/query` | 入参：`query`、`top_k`；出参：`answer` + `citations[]`（`question_id` / `chunk_id` + 摘录） | √ |
+| 2.1.5 | **Prompt**：无相关片段则拒答或明确「库中未找到」 | 降低胡编 | √ |
+| 2.1.6 | **前端 Copilot 页** | 路由 `/copilot`；`MarkdownRenderer`；引用列表（详见 [todo-rag-knowledge-copilot.md](./todo-rag-knowledge-copilot.md)） | √ |
+| 2.1.7 | **向量检索（可选，RAG 增强）** | 云端 embedding + 相似度排序，与关键词结果融合 | 二期 |
+| 2.1.8 | **多轮 + SSE（可选）** | `kb_threads` / `kb_messages`；`StreamingResponse` | 二期 |
 
 ### 2.2 技术栈与学习线索
 
@@ -307,3 +309,4 @@
 | 2026-05-08 | §1.1.4：daily 短时阅卷幂等 + `grading_reused` + `PRACTICE_DAILY_IDEMPOTENCY_*` |
 | 2026-05-08 | §1 收尾：`POST /questions` 可选参考答案、会话重复 200+`grading_reused`、预览前清理过期 extract 缓存、`ai_call_prepare` 日志、pytest |
 | 2026-05-08 | §12 基线 pytest + `ai-latency-and-streaming.md`；README / api-design 联调索引；todo 阶段 D 补全 |
+| 2026-05-08 | §2 链接 [todo-rag-knowledge-copilot.md](./todo-rag-knowledge-copilot.md)（RAG 实现步骤） |

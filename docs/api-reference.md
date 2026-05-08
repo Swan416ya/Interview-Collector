@@ -26,6 +26,52 @@ When any API is added/removed/changed, update this file in the same commit.
 }
 ```
 
+### Knowledge base query (RAG Copilot)
+
+- Method: `POST`
+- Path: `/api/kb/query`
+- Description:
+  - Full-text / substring search on indexed chunks (`document_chunks`: question stem + reference answer).
+  - Retrieves top `top_k` fragments, calls the configured LLM once, returns an answer plus **citations** (`chunk_id`, `question_id`, excerpt, `source_type`).
+  - If nothing matches locally, returns HTTP 200 with a fixed **no-hit** sentence and empty `citations` (no LLM call).
+- Request body:
+
+```json
+{
+  "query": "Redis 持久化怎么做？",
+  "top_k": 5
+}
+```
+
+- Response example:
+
+```json
+{
+  "answer": "……",
+  "citations": [
+    {
+      "chunk_id": 12,
+      "question_id": 7,
+      "excerpt": "RDB …",
+      "source_type": "question_reference"
+    }
+  ]
+}
+```
+
+### Knowledge base reindex
+
+- Method: `POST`
+- Path: `/api/kb/reindex`
+- Description: Rebuild `document_chunks` from all rows in `questions` (stem + non-empty `reference_answer`). Use after enabling RAG on an existing database or bulk SQL edits.
+- Response example:
+
+```json
+{
+  "questions_processed": 238
+}
+```
+
 ### List Questions
 
 - Method: `GET`

@@ -6,6 +6,7 @@ import {
   FolderKanban,
   History,
   House,
+  Sparkles,
   UploadCloud,
   UserCircle2
 } from "lucide-vue-next";
@@ -14,6 +15,7 @@ import { mockUserProfile } from "./mock/userProfile";
 const navItems = [
   { to: "/", title: "用户主页", desc: "个人信息、活跃图、每日一题", icon: House },
   { to: "/questions", title: "题库", desc: "筛选、排序、做题记录", icon: BookOpen },
+  { to: "/copilot", title: "知识库", desc: "RAG 问答与引用", icon: Sparkles },
   { to: "/import", title: "导入", desc: "AI 提取并入库面经题目", icon: UploadCloud },
   { to: "/practice", title: "训练", desc: "刷题/背题均支持 5/10/15 题", icon: Brain },
   { to: "/practice-history", title: "刷题记录", desc: "查看每轮会话与得分", icon: History },

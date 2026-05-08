@@ -97,7 +97,15 @@ def _extract_output_text_from_response(data: dict) -> str:
     return ""
 
 
-def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = None) -> tuple[dict, dict]:
+def _post_doubao_responses_op(
+    prompt: str,
+    raw_text: str,
+    *,
+    op: str,
+    max_output_tokens: int | None = None,
+    thinking_type: str | None = None,
+) -> tuple[dict, dict]:
+    """Shared Ark /responses call; logs ai_call_prepare / ai_call_start with given op tag."""
     if not settings.ai_api_key or not settings.ai_model:
         raise HTTPException(
             status_code=500,
@@ -119,24 +127,25 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
         "Authorization": f"Bearer {settings.ai_api_key}",
         "Content-Type": "application/json",
     }
+    tokens = max_output_tokens if max_output_tokens is not None else settings.ai_max_output_tokens
     payload = {
         "model": settings.ai_model,
         "input": [
             {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
             {"role": "user", "content": [{"type": "input_text", "text": raw_text}]},
         ],
-        # Limit output size to reduce long-tail latency on extraction.
-        "max_output_tokens": settings.ai_max_output_tokens,
+        "max_output_tokens": tokens,
         "temperature": 0,
-        # Ark Responses API supports disabling deep thinking via this field.
         "thinking": {"type": thinking_type or settings.ai_thinking_type},
     }
 
     logger.info(
-        "ai_call_prepare op=responses_extract prompt_len=%s user_text_len=%s thinking=%s",
+        "ai_call_prepare op=%s prompt_len=%s user_text_len=%s thinking=%s max_out=%s",
+        op,
         len(prompt),
         len(raw_text),
         thinking_type or settings.ai_thinking_type,
+        tokens,
     )
 
     timeout = httpx.Timeout(
@@ -150,7 +159,8 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
     for attempt in range(settings.ai_retries + 1):
         started = time.perf_counter()
         logger.info(
-            "ai_call_start op=responses_extract attempt=%s model=%s base_url=%s prompt_len=%s user_text_len=%s",
+            "ai_call_start op=%s attempt=%s model=%s base_url=%s prompt_len=%s user_text_len=%s",
+            op,
             attempt + 1,
             settings.ai_model,
             settings.ai_base_url,
@@ -240,6 +250,44 @@ def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = 
         )
     parsed = _extract_json_object(output_text)
     return parsed, data
+
+
+def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = None) -> tuple[dict, dict]:
+    return _post_doubao_responses_op(
+        prompt,
+        raw_text,
+        op="responses_extract",
+        max_output_tokens=settings.ai_max_output_tokens,
+        thinking_type=thinking_type,
+    )
+
+
+KB_QUERY_SYSTEM_PROMPT = """
+你是面试题知识库助手。你只能根据 user JSON 里 fragments 数组中的文本作答。
+规则：
+1) 若 fragments 为空、或其中没有任何与用户问题相关的信息，则 answer 必须且仅为：知识库中未找到相关条目（不要加引号或其它字）
+2) 否则只依据 fragments 综合回答；可使用 Markdown；禁止编造 fragments 中不存在的技术细节、数字或公司名。
+3) 只输出 JSON，不要任何解释文字。
+4) cited_chunk_ids 中的每个整数必须是 fragments 里出现过的 chunk_id；禁止编造 id。
+5) 输出格式：
+{
+  "answer": "string",
+  "cited_chunk_ids": [1, 2]
+}
+""".strip()
+
+
+def call_doubao_kb_query(user_question: str, fragments: list[dict]) -> dict:
+    payload = {"user_question": user_question, "fragments": fragments}
+    raw = json.dumps(payload, ensure_ascii=False)
+    parsed, _ = _post_doubao_responses_op(
+        KB_QUERY_SYSTEM_PROMPT,
+        raw,
+        op="kb_query",
+        max_output_tokens=settings.ai_kb_max_output_tokens,
+        thinking_type="disabled",
+    )
+    return parsed
 
 
 def call_doubao_grade(question_stem: str, user_answer: str) -> dict:

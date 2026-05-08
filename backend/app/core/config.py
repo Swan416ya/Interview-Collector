@@ -27,6 +27,7 @@ class Settings(BaseModel):
     ai_connect_timeout_seconds: int = int(os.getenv("AI_CONNECT_TIMEOUT_SECONDS", "15"))
     ai_retries: int = int(os.getenv("AI_RETRIES", "2"))
     ai_max_output_tokens: int = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "1200"))
+    ai_kb_max_output_tokens: int = int(os.getenv("AI_KB_MAX_OUTPUT_TOKENS", "2048"))
     ai_debug_raw_response: bool = os.getenv("AI_DEBUG_RAW_RESPONSE", "false").lower() == "true"
     ai_thinking_type: str = os.getenv("AI_THINKING_TYPE", "disabled")
     import_preview_cache_enabled: bool = os.getenv("IMPORT_PREVIEW_CACHE_ENABLED", "true").lower() == "true"

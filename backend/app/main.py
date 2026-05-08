@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.import_routes import router as import_router
+from app.api.kb_routes import router as kb_router
 from app.api.practice_routes import router as practice_router
 from app.api.question_routes import router as question_router
 from app.api.taxonomy_routes import router as taxonomy_router
@@ -12,6 +13,7 @@ from app.core.database import Base, engine
 from app.models import (  # noqa: F401
     Category,
     Company,
+    DocumentChunk,
     ImportExtractCache,
     Question,
     QuestionCompany,
@@ -50,4 +52,5 @@ app.include_router(question_router)
 app.include_router(practice_router)
 app.include_router(taxonomy_router)
 app.include_router(import_router)
+app.include_router(kb_router)
 

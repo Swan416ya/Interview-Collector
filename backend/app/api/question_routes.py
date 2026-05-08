@@ -13,6 +13,7 @@ from app.schemas.question import (
     QuestionUpdate,
 )
 from app.services.ai_service import call_doubao_reference_answer
+from app.services.kb_chunk_service import sync_question_chunks
 from app.services.reference_answer_resolver import resolve_reference_for_stem
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
@@ -124,6 +125,8 @@ def create_question(payload: QuestionCreate, db: Session = Depends(get_db)):
         reference_answer=reference_answer,
     )
     db.add(item)
+    db.flush()
+    sync_question_chunks(db, item)
     db.commit()
     db.refresh(item)
     return item
@@ -137,6 +140,8 @@ def update_question(question_id: int, payload: QuestionUpdate, db: Session = Dep
     item.stem = payload.stem
     item.category = payload.category
     item.difficulty = payload.difficulty
+    db.flush()
+    sync_question_chunks(db, item)
     db.commit()
     db.refresh(item)
     return item
@@ -159,6 +164,8 @@ def refresh_question_reference_answer(question_id: int, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="Question not found")
     try:
         item.reference_answer = call_doubao_reference_answer(item.stem)
+        db.flush()
+        sync_question_chunks(db, item)
         db.commit()
         db.refresh(item)
         return item
@@ -215,6 +222,11 @@ def backfill_reference_answers(
             updated += 1
         except Exception as exc:  # noqa: BLE001
             failed.append({"question_id": q.id, "error": str(exc)})
+    db.commit()
+    for q in candidates:
+        row = db.get(Question, q.id)
+        if row is not None:
+            sync_question_chunks(db, row)
     db.commit()
     return {"scanned": len(candidates), "updated": updated, "failed": failed}
 
