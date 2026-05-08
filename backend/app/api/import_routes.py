@@ -14,7 +14,9 @@ from app.schemas.importing import (
     ImportPreviewRequest,
     ImportQuestionItem,
 )
-from app.services.ai_service import call_doubao_extract, call_doubao_reference_answer
+from app.core.stem_norm import stem_fingerprint
+from app.services.ai_service import call_doubao_extract
+from app.services.reference_answer_resolver import resolve_reference_for_stem
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 logger = logging.getLogger(__name__)
@@ -72,6 +74,7 @@ def _insert_single_import_question(
     item: ImportQuestionItem,
     category_names: set[str],
     role_by_name: dict[str, Role],
+    reference_cache: dict[str, str] | None = None,
 ) -> tuple[Question, dict]:
     """
     Create one question (with AI reference answer), relations; flush within current transaction.
@@ -87,7 +90,7 @@ def _insert_single_import_question(
         stem=item.stem.strip(),
         category=cat,
         difficulty=item.difficulty,
-        reference_answer=call_doubao_reference_answer(item.stem.strip()),
+        reference_answer=resolve_reference_for_stem(item.stem.strip(), batch_cache=reference_cache),
     )
     db.add(q)
     db.flush()
@@ -215,10 +218,6 @@ def _split_text_for_extract(raw_text: str, max_chars: int = 1200) -> list[str]:
     return chunks
 
 
-def _normalize_stem(stem: str) -> str:
-    return "".join(stem.lower().split())
-
-
 @router.get("/prompt-template")
 def get_import_prompt_template(db: Session = Depends(get_db)):
     categories = db.scalars(select(Category.name).order_by(Category.name.asc())).all()
@@ -259,7 +258,7 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
                 stem = str(q.get("stem", "")).strip()
                 if not stem:
                     continue
-                key = _normalize_stem(stem)
+                key = stem_fingerprint(stem)
                 if key in seen_stems:
                     continue
                 seen_stems.add(key)
@@ -330,9 +329,12 @@ def import_commit(payload: ImportPayload, db: Session = Depends(get_db)):
     category_fallbacks = 0
     role_lists_adjusted = 0
 
+    reference_cache: dict[str, str] = {}
     try:
         for item in payload.questions:
-            _, stats = _insert_single_import_question(db, item, category_names, role_by_name)
+            _, stats = _insert_single_import_question(
+                db, item, category_names, role_by_name, reference_cache=reference_cache
+            )
             created_questions += 1
             if stats["category_fallback"]:
                 category_fallbacks += 1

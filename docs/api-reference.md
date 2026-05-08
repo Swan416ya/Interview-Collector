@@ -321,7 +321,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - **category**：若 AI 返回的名称不在本地分类表中，自动改为 **「未分类」**（若存在），否则改为字典序第一个分类；不会因此返回 400
   - **roles**：仅保留本地岗位表中存在的名称；可退化为空列表；不会因此返回 400
   - companies: link if exists, create if not
-  - each imported question auto-generates `reference_answer` via AI
+  - each imported question gets `reference_answer` via AI **unless** another item in the **same request** already generated one for the same **stem fingerprint**（规范化题干：小写、去空白），此时复用同一段参考答案，**不重复调用**参考答案模型
   - 同一事务内处理全部题目；任一题失败则整批回滚
 - Response extra fields:
   - `category_fallbacks`: 发生分类回退的题目数量
@@ -347,6 +347,7 @@ When any API is added/removed/changed, update this file in the same commit.
 - Description:
   - scan questions with empty `reference_answer`
   - call AI to generate and fill missing reference answers
+  - 单次请求内若多条候选题干经 **stem fingerprint** 相同，仅对第一条调用 AI，其余复用（减少重复计费）
 
 ### Import Preview (AI Extract)
 

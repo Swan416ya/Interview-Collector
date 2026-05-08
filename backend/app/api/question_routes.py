@@ -13,6 +13,7 @@ from app.schemas.question import (
     QuestionUpdate,
 )
 from app.services.ai_service import call_doubao_reference_answer
+from app.services.reference_answer_resolver import resolve_reference_for_stem
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -202,9 +203,10 @@ def backfill_reference_answers(
     ).all()
     updated = 0
     failed: list[dict] = []
+    reference_cache: dict[str, str] = {}
     for q in candidates:
         try:
-            q.reference_answer = call_doubao_reference_answer(q.stem)
+            q.reference_answer = resolve_reference_for_stem(q.stem, batch_cache=reference_cache)
             updated += 1
         except Exception as exc:  # noqa: BLE001
             failed.append({"question_id": q.id, "error": str(exc)})
