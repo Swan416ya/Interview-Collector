@@ -37,7 +37,7 @@
 | 1.1.2 | **同一请求内去重**：批量导入中多条 **stem 规范化后相同** 只生成一次 reference，其余复用字符串 | 内存 dict 即可 MVP |
 | 1.1.3 | **抽取预览缓存** | 已实现：按 **SHA256(完整抽取 prompt + chunk)** 写入 `import_extract_cache`（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 B） |
 | 1.1.4 | **阅卷幂等** | 会话 submit/skip：同会话同题已有记录则 **200** 返回已有 `PracticeRecord`，`grading_reused=true`，不调阅卷；每日：`daily/submit` 时间窗同上（见 [todo-reduce-duplicate-ai-calls.md](./todo-reduce-duplicate-ai-calls.md) 阶段 C） |
-| 1.1.5 | **结构化日志（轻量）** | `ai_service`：`ai_call_prepare` + `ai_call_start`（含 `prompt_len`/`user_text_len`/`stem_len`/`answer_len`）；缓存命中路径另有 `logger.info` |
+| 1.1.5 | **结构化日志（轻量）** | `ai_service`：`ai_call_prepare` + `ai_call_start`；成功/失败收尾 `ai_call_done`（`latency_ms` / `outcome` / `http_status`）；导入预览缓存命中见 `ai_call_skipped`（§5） |
 
 ### 1.2 技术栈与学习线索
 
@@ -136,13 +136,15 @@
 
 **业务目标**：超时、重试、JSON 解析集中维护；**不**引入多模型环境变量（当前明确不做）。
 
+**实现状态**：§5.1 **5.1.1–5.1.2 已落地**（`ai_service.call_llm_json` 统一 JSON 类调用；`_post_doubao_responses_op` 收尾 `ai_call_done` 含 `outcome` / 总 `latency_ms` / `http_status`；导入预览缓存命中日志带 `ai_call_skipped`）。5.1.3 仍为「暂不实施」。
+
 ### 5.1 小项清单
 
-| 序号 | 小项 | 验收标准（建议） |
-|------|------|------------------|
-| 5.1.1 | 抽出 `call_llm_json(...)` 或类 `ArkResponsesClient` | `extract` / `grade` / `session_summary` / `kb_query` 共用 |
-| 5.1.2 | **结构化日志** | `latency_ms`、错误码、是否跳过缓存；仍用 Python `logging` 即可 |
-| 5.1.3 | **（删除项）** 分场景多 `AI_MODEL_*` | **暂不实施**，避免范围蔓延 |
+| 序号 | 小项 | 验收标准（建议） | 完成 |
+|------|------|------------------|------|
+| 5.1.1 | 抽出 `call_llm_json(...)` 或类 `ArkResponsesClient` | `extract` / `grade` / `reference_answer` / `session_summary` / `kb_query` 经 `call_llm_json` → `_post_doubao_responses_op` | [x] |
+| 5.1.2 | **结构化日志** | `ai_call_done`：`latency_ms`、`outcome`（ok / http_error / transport_error 等）、`http_status`；导入缓存命中：`ai_call_skipped op=extract` | [x] |
+| 5.1.3 | **（删除项）** 分场景多 `AI_MODEL_*` | **暂不实施**，避免范围蔓延 | — |
 
 ### 5.2 技术栈与学习线索
 
@@ -314,3 +316,4 @@
 | 2026-05-08 | §1 收尾：`POST /questions` 可选参考答案、会话重复 200+`grading_reused`、预览前清理过期 extract 缓存、`ai_call_prepare` 日志、pytest |
 | 2026-05-08 | §12 基线 pytest + `ai-latency-and-streaming.md`；README / api-design 联调索引；todo 阶段 D 补全 |
 | 2026-05-08 | §2 链接 [todo-rag-knowledge-copilot.md](./todo-rag-knowledge-copilot.md)（RAG 实现步骤） |
+| 2026-05-08 | §5：`call_llm_json` + `ai_call_done` / `ai_call_skipped`（可观测）；§1.1.5 描述与 §5 对齐 |

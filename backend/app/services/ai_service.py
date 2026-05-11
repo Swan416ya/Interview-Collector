@@ -109,6 +109,27 @@ def _extract_output_text_from_response(data: dict) -> str:
     return ""
 
 
+def call_llm_json(
+    system_prompt: str,
+    user_text: str,
+    *,
+    op: str,
+    max_output_tokens: int | None = None,
+    thinking_type: str | None = None,
+) -> tuple[dict, dict]:
+    """
+    Thin entry for all JSON-returning LLM calls (extract, grade, kb_query, session_summary, etc.).
+    Shares timeout, retries, and logging with `_post_doubao_responses_op`.
+    """
+    return _post_doubao_responses_op(
+        system_prompt,
+        user_text,
+        op=op,
+        max_output_tokens=max_output_tokens,
+        thinking_type=thinking_type,
+    )
+
+
 def _post_doubao_responses_op(
     prompt: str,
     raw_text: str,
@@ -118,6 +139,11 @@ def _post_doubao_responses_op(
     thinking_type: str | None = None,
 ) -> tuple[dict, dict]:
     """Ark /responses or OpenAI-compatible /chat/completions (e.g. Xiaomi MiMo Token Plan)."""
+    wall_start = time.perf_counter()
+
+    def _wall_ms() -> int:
+        return int((time.perf_counter() - wall_start) * 1000)
+
     if not settings.ai_api_key or not settings.ai_model:
         raise HTTPException(
             status_code=500,
@@ -181,6 +207,11 @@ def _post_doubao_responses_op(
             tokens,
         )
     else:
+        logger.info(
+            "ai_call_done op=%s outcome=unsupported_provider latency_ms=%s",
+            op,
+            _wall_ms(),
+        )
         raise HTTPException(
             status_code=500,
             detail={
@@ -218,6 +249,15 @@ def _post_doubao_responses_op(
             if resp.status_code >= 400:
                 body_preview = _safe_text_preview(resp.text)
                 logger.error("AI bad status body=%s", body_preview)
+                logger.info(
+                    "ai_call_done op=%s outcome=http_error latency_ms=%s provider=%s "
+                    "http_status=%s attempt=%s",
+                    op,
+                    _wall_ms(),
+                    provider,
+                    resp.status_code,
+                    attempt + 1,
+                )
                 raise HTTPException(
                     status_code=502,
                     detail={
@@ -245,6 +285,14 @@ def _post_doubao_responses_op(
             if attempt < settings.ai_retries:
                 time.sleep(1.5 * (attempt + 1))
                 continue
+            logger.info(
+                "ai_call_done op=%s outcome=transport_error latency_ms=%s provider=%s attempts=%s error=%s",
+                op,
+                _wall_ms(),
+                provider,
+                settings.ai_retries + 1,
+                last_error,
+            )
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -261,6 +309,12 @@ def _post_doubao_responses_op(
             ) from exc
 
     if resp is None:
+        logger.info(
+            "ai_call_done op=%s outcome=no_response latency_ms=%s provider=%s",
+            op,
+            _wall_ms(),
+            provider,
+        )
         raise HTTPException(status_code=502, detail={"message": "AI request got empty response"})
 
     try:
@@ -268,6 +322,13 @@ def _post_doubao_responses_op(
     except json.JSONDecodeError as exc:
         body_preview = _safe_text_preview(resp.text)
         logger.error("AI response not JSON body=%s", body_preview)
+        logger.info(
+            "ai_call_done op=%s outcome=invalid_json_body latency_ms=%s provider=%s http_status=%s",
+            op,
+            _wall_ms(),
+            provider,
+            resp.status_code,
+        )
         raise HTTPException(
             status_code=502,
             detail={
@@ -284,6 +345,13 @@ def _post_doubao_responses_op(
     if not output_text:
         preview = _safe_text_preview(json.dumps(data, ensure_ascii=False), 800)
         logger.error("AI response has no parseable output text. body=%s", preview)
+        logger.info(
+            "ai_call_done op=%s outcome=no_output_text latency_ms=%s provider=%s http_status=%s",
+            op,
+            _wall_ms(),
+            provider,
+            resp.status_code,
+        )
         raise HTTPException(
             status_code=502,
             detail={
@@ -291,15 +359,33 @@ def _post_doubao_responses_op(
                 "response_preview": preview,
             },
         )
-    parsed = _extract_json_object(output_text)
+    try:
+        parsed = _extract_json_object(output_text)
+    except HTTPException:
+        logger.info(
+            "ai_call_done op=%s outcome=output_json_parse_error latency_ms=%s provider=%s http_status=%s",
+            op,
+            _wall_ms(),
+            provider,
+            resp.status_code,
+        )
+        raise
+    logger.info(
+        "ai_call_done op=%s outcome=ok latency_ms=%s provider=%s http_status=%s model=%s",
+        op,
+        _wall_ms(),
+        provider,
+        resp.status_code,
+        settings.ai_model,
+    )
     return parsed, data
 
 
 def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = None) -> tuple[dict, dict]:
-    return _post_doubao_responses_op(
+    return call_llm_json(
         prompt,
         raw_text,
-        op="responses_extract",
+        op="extract",
         max_output_tokens=settings.ai_max_output_tokens,
         thinking_type=thinking_type,
     )
@@ -323,7 +409,7 @@ KB_QUERY_SYSTEM_PROMPT = """
 def call_doubao_kb_query(user_question: str, fragments: list[dict]) -> dict:
     payload = {"user_question": user_question, "fragments": fragments}
     raw = json.dumps(payload, ensure_ascii=False)
-    parsed, _ = _post_doubao_responses_op(
+    parsed, _ = call_llm_json(
         KB_QUERY_SYSTEM_PROMPT,
         raw,
         op="kb_query",
@@ -355,7 +441,7 @@ SESSION_SUMMARY_SYSTEM_PROMPT = """
 
 def call_doubao_session_summary(session_digest: str) -> dict:
     """One-shot session-level feedback; returns parsed JSON dict."""
-    parsed, _ = _post_doubao_responses_op(
+    parsed, _ = call_llm_json(
         SESSION_SUMMARY_SYSTEM_PROMPT,
         session_digest,
         op="session_summary",
@@ -366,11 +452,6 @@ def call_doubao_session_summary(session_digest: str) -> dict:
 
 
 def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
-    logger.info(
-        "ai_call_prepare op=grade stem_len=%s answer_len=%s",
-        len(question_stem),
-        len(user_answer),
-    )
     prompt = """
 你是计算机面试官。请对用户回答打分并给出解析。
 规则：
@@ -385,7 +466,13 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
 """.strip()
     input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
     try:
-        result, _ = call_doubao_extract(prompt=prompt, raw_text=input_text, thinking_type="disabled")
+        result, _ = call_llm_json(
+            prompt,
+            input_text,
+            op="grade",
+            max_output_tokens=settings.ai_max_output_tokens,
+            thinking_type="disabled",
+        )
     except HTTPException as exc:
         # Grading path fallback:
         # Some model outputs are almost-JSON but contain unescaped quotes inside analysis,
@@ -419,7 +506,6 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
 
 
 def call_doubao_reference_answer(question_stem: str) -> str:
-    logger.info("ai_call_prepare op=reference_answer stem_len=%s", len(question_stem))
     prompt = """
 你是计算机面试题参考答案生成器。
 规则：
@@ -430,7 +516,13 @@ def call_doubao_reference_answer(question_stem: str) -> str:
 }
 3) reference_answer 直接给清晰、准确、可用于复习的答案。
 """.strip()
-    result, _ = call_doubao_extract(prompt=prompt, raw_text=f"题目：{question_stem}", thinking_type="disabled")
+    result, _ = call_llm_json(
+        prompt,
+        f"题目：{question_stem}",
+        op="reference_answer",
+        max_output_tokens=settings.ai_max_output_tokens,
+        thinking_type="disabled",
+    )
     answer = str(result.get("reference_answer", "")).strip()
     return answer
 

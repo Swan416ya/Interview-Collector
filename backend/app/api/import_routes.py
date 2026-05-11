@@ -316,7 +316,8 @@ def import_preview(payload: ImportPreviewRequest, db: Session = Depends(get_db))
                         ai_json = json.loads(cached.payload_json)
                         extract_cache_hits += 1
                         logger.info(
-                            "import_preview skip_ai reason=extract_cache chunk_index=%s",
+                            "import_preview skip_ai ai_call_skipped=true op=extract "
+                            "reason=extract_cache chunk_index=%s latency_ms=0",
                             idx + 1,
                         )
                     except json.JSONDecodeError:
