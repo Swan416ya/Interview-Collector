@@ -36,6 +36,8 @@ const recordsLoaded = ref(false);
 const records = ref<PracticeRecord[]>([]);
 const singlePracticeAnswer = ref("");
 const singlePracticeSubmitting = ref(false);
+const singleGradingStream = ref("");
+const singlePracticeError = ref("");
 const singlePracticeResult = ref<{ score: number; analysis: string; reference: string } | null>(null);
 const refreshingReference = ref(false);
 const scoreChartCanvas = ref<HTMLCanvasElement | null>(null);
@@ -163,6 +165,8 @@ async function openActionModal(q: Question) {
   records.value = [];
   singlePracticeAnswer.value = "";
   singlePracticeResult.value = null;
+  singleGradingStream.value = "";
+  singlePracticeError.value = "";
   destroyScoreTrendChart();
   try {
     records.value = await fetchQuestionRecords(q.id);
@@ -181,6 +185,8 @@ function closeActionModal() {
   recordsLoaded.value = false;
   singlePracticeAnswer.value = "";
   singlePracticeResult.value = null;
+  singleGradingStream.value = "";
+  singlePracticeError.value = "";
 }
 
 async function saveEdit() {
@@ -231,14 +237,24 @@ async function submitSingleQuestionPractice() {
   if (!selectedQuestion.value) return;
   if (!singlePracticeAnswer.value.trim()) return;
   singlePracticeSubmitting.value = true;
+  singlePracticeError.value = "";
+  singleGradingStream.value = "";
   try {
-    const data = await submitDailyPracticeAnswer(selectedQuestion.value.id, singlePracticeAnswer.value.trim());
+    const data = await submitDailyPracticeAnswer(
+      selectedQuestion.value.id,
+      singlePracticeAnswer.value.trim(),
+      (delta) => {
+        singleGradingStream.value += delta;
+      }
+    );
     singlePracticeResult.value = {
       score: data.record.ai_score,
       analysis: data.analysis,
       reference: data.reference_answer
     };
     await loadRecords();
+  } catch (e) {
+    singlePracticeError.value = e instanceof Error ? e.message : String(e);
   } finally {
     singlePracticeSubmitting.value = false;
   }
@@ -374,10 +390,20 @@ onMounted(async () => {
                 {{ singlePracticeSubmitting ? "判题中..." : "提交并判题" }}
               </button>
             </div>
+            <p v-if="singlePracticeError" style="color: #c0392b; font-size: 13px; margin-top: 8px;">{{ singlePracticeError }}</p>
             <LoadingIndicator
-              v-if="singlePracticeSubmitting"
-              text="AI 正在判题（约 10–30 秒；勿重复点击）"
+              v-if="singlePracticeSubmitting && !singleGradingStream"
+              text="AI 正在判题（连接模型中…）"
             />
+            <div
+              v-if="singlePracticeSubmitting && singleGradingStream"
+              style="margin-top: 10px; padding: 10px; border-radius: 8px; background: #f6f8fa; border: 1px solid #d0d7de;"
+            >
+              <div style="font-size: 12px; color: #57606a; margin-bottom: 6px;">AI 判题思路（流式）</div>
+              <pre
+                style="margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; color: #24292f; max-height: 200px; overflow: auto;"
+              >{{ singleGradingStream }}</pre>
+            </div>
             <div v-if="singlePracticeResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
               <p><strong>得分：</strong>{{ singlePracticeResult.score }} / 10</p>
               <div>

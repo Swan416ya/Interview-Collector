@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Iterator
 
 import httpx
 from fastapi import HTTPException
@@ -9,6 +10,19 @@ from fastapi import HTTPException
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+GRADE_SYSTEM_PROMPT = """
+你是计算机面试官。请对用户回答打分并给出解析。
+规则：
+1) 只输出 JSON，不要任何解释文字。
+2) score 为 0-10 的整数。
+3) analysis 是针对本次回答的解析，必须小于 200 字。
+4) 输出格式必须为：
+{
+  "score": 0,
+  "analysis": "string"
+}
+""".strip()
 
 
 def _safe_text_preview(text: str, limit: int = 400) -> str:
@@ -381,13 +395,13 @@ def _post_doubao_responses_op(
     return parsed, data
 
 
-def call_doubao_extract(prompt: str, raw_text: str, thinking_type: str | None = None) -> tuple[dict, dict]:
+def call_doubao_extract(prompt: str, raw_text: str) -> tuple[dict, dict]:
     return call_llm_json(
         prompt,
         raw_text,
         op="extract",
         max_output_tokens=settings.ai_max_output_tokens,
-        thinking_type=thinking_type,
+        thinking_type="disabled",
     )
 
 
@@ -451,32 +465,26 @@ def call_doubao_session_summary(session_digest: str) -> dict:
     return parsed
 
 
-def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
-    prompt = """
-你是计算机面试官。请对用户回答打分并给出解析。
-规则：
-1) 只输出 JSON，不要任何解释文字。
-2) score 为 0-10 的整数。
-3) analysis 是针对本次回答的解析，必须小于 200 字。
-4) 输出格式必须为：
-{
-  "score": 0,
-  "analysis": "string"
-}
-""".strip()
-    input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
+def _finalize_grading_dict(result: dict) -> dict:
+    if "score" not in result or "analysis" not in result:
+        raise HTTPException(status_code=502, detail="AI grading output missing score or analysis")
     try:
-        result, _ = call_llm_json(
-            prompt,
-            input_text,
-            op="grade",
-            max_output_tokens=settings.ai_max_output_tokens,
-            thinking_type="disabled",
-        )
+        score = int(result["score"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="AI grading score must be int") from exc
+    score = max(0, min(10, score))
+    analysis = str(result.get("analysis", "")).strip()
+    if len(analysis) > 200:
+        analysis = analysis[:200]
+    return {"score": score, "analysis": analysis}
+
+
+def _grading_dict_from_assistant_text(output_text: str) -> dict:
+    """Parse streamed (or non-streamed) assistant text into {score, analysis}."""
+    try:
+        raw = _extract_json_object(output_text)
+        return _finalize_grading_dict(raw)
     except HTTPException as exc:
-        # Grading path fallback:
-        # Some model outputs are almost-JSON but contain unescaped quotes inside analysis,
-        # causing strict JSON parse failure. Try to salvage score/analysis from preview text.
         detail = getattr(exc, "detail", None)
         if isinstance(detail, dict) and detail.get("message") == "Failed to parse AI JSON output":
             preview = str(detail.get("output_preview", ""))
@@ -492,17 +500,133 @@ def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
                 return {"score": score, "analysis": analysis}
         raise
 
-    if "score" not in result or "analysis" not in result:
-        raise HTTPException(status_code=502, detail="AI grading output missing score or analysis")
+
+def call_doubao_grade(question_stem: str, user_answer: str) -> dict:
+    input_text = f"题目：{question_stem}\n用户回答：{user_answer}"
     try:
-        score = int(result["score"])
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="AI grading score must be int") from exc
-    score = max(0, min(10, score))
-    analysis = str(result.get("analysis", "")).strip()
-    if len(analysis) > 200:
-        analysis = analysis[:200]
-    return {"score": score, "analysis": analysis}
+        result, _ = call_llm_json(
+            GRADE_SYSTEM_PROMPT,
+            input_text,
+            op="grade",
+            max_output_tokens=settings.ai_max_output_tokens,
+            thinking_type="disabled",
+        )
+    except HTTPException as exc:
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict) and detail.get("message") == "Failed to parse AI JSON output":
+            preview = str(detail.get("output_preview", ""))
+            return _grading_dict_from_assistant_text(preview)
+        raise
+    return _finalize_grading_dict(result)
+
+
+def _grade_user_payload(question_stem: str, user_answer: str) -> str:
+    return f"题目：{question_stem}\n用户回答：{user_answer}"
+
+
+def iter_grade_stream_events(question_stem: str, user_answer: str) -> Iterator[tuple[str, str | dict]]:
+    """
+    For NDJSON practice grading streams.
+
+    Yields:
+      ("reasoning", delta) — model chain-of-thought chunk (MiMo OpenAI stream: reasoning_content)
+      ("graded", {"score": int, "analysis": str})
+      ("error", message) — terminal; no further events
+    """
+    provider = _normalize_ai_provider()
+    user_text = _grade_user_payload(question_stem, user_answer)
+
+    if provider != "openai_compatible":
+        yield ("reasoning", "正在阅卷…\n")
+        try:
+            g = call_doubao_grade(question_stem, user_answer)
+        except HTTPException as exc:
+            detail = getattr(exc, "detail", None)
+            msg = json.dumps(detail, ensure_ascii=False) if detail is not None else str(exc)
+            yield ("error", msg)
+            return
+        yield ("graded", g)
+        return
+
+    if not settings.ai_api_key or not settings.ai_model:
+        yield ("error", "AI config missing (AI_API_KEY / AI_MODEL)")
+        return
+
+    base = settings.ai_base_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    tokens = settings.ai_max_output_tokens
+    payload = {
+        "model": settings.ai_model,
+        "messages": [
+            {"role": "system", "content": GRADE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_text},
+        ],
+        "temperature": 0,
+        "stream": True,
+        "max_tokens": tokens,
+        "max_completion_tokens": tokens,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.ai_api_key}",
+        "Content-Type": "application/json",
+    }
+    timeout = httpx.Timeout(
+        timeout=settings.ai_timeout_seconds,
+        connect=settings.ai_connect_timeout_seconds,
+        read=settings.ai_read_timeout_seconds,
+    )
+    content_parts: list[str] = []
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = resp.read().decode("utf-8", errors="replace")[:800]
+                    yield ("error", f"AI stream HTTP {resp.status_code}: {body}")
+                    return
+                for line in resp.iter_lines():
+                    if not line or line.startswith(":"):
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = obj.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
+                    if not isinstance(delta, dict):
+                        continue
+                    rc = delta.get("reasoning_content")
+                    if isinstance(rc, str) and rc:
+                        yield ("reasoning", rc)
+                    else:
+                        alt_r = delta.get("reasoning")
+                        if isinstance(alt_r, str) and alt_r:
+                            yield ("reasoning", alt_r)
+                    piece = delta.get("content")
+                    if isinstance(piece, str) and piece:
+                        content_parts.append(piece)
+    except httpx.HTTPError as exc:
+        yield ("error", f"AI stream transport error: {exc}")
+        return
+
+    full_text = "".join(content_parts).strip()
+    if not full_text:
+        yield ("error", "AI stream ended with empty assistant content")
+        return
+    try:
+        graded = _grading_dict_from_assistant_text(full_text)
+    except HTTPException as exc:
+        detail = getattr(exc, "detail", None)
+        msg = json.dumps(detail, ensure_ascii=False) if isinstance(detail, (dict, list)) else str(detail or exc)
+        yield ("error", msg)
+        return
+    yield ("graded", graded)
 
 
 def call_doubao_reference_answer(question_stem: str) -> str:

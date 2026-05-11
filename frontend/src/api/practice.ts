@@ -1,6 +1,8 @@
 import { apiClient } from "./client";
 import type { Question } from "./questions";
 
+const streamBaseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
 export interface PracticeStartResponse {
   session_id: number;
   questions: Question[];
@@ -27,6 +29,17 @@ export interface PracticeRecord {
   ai_score: number; // 0-10
   created_at: string;
 }
+
+export type GradeStreamLine =
+  | { type: "reasoning"; delta: string }
+  | {
+      type: "done";
+      record: PracticeRecord;
+      analysis: string;
+      reference_answer: string;
+      grading_reused?: boolean;
+    }
+  | { type: "error"; detail: string };
 
 export interface PracticeSubmitResponse {
   record: PracticeRecord;
@@ -129,31 +142,113 @@ export async function startPracticeSessionCustom(questionIds: number[]): Promise
   return data;
 }
 
+async function consumeGradeSubmitNdjsonStream(
+  path: string,
+  body: { question_id: number; user_answer: string },
+  onReasoningDelta?: (delta: string) => void
+): Promise<PracticeSubmitResponse> {
+  const controller = new AbortController();
+  const timeoutMs = 120000;
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${streamBaseURL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text || `HTTP ${res.status}`;
+    try {
+      const j = JSON.parse(text) as { detail?: unknown };
+      if (typeof j.detail === "string") msg = j.detail;
+      else if (j.detail != null) msg = JSON.stringify(j.detail);
+    } catch {
+      /* keep msg */
+    }
+    throw new Error(msg);
+  }
+  if (!res.body) {
+    throw new Error("Empty response body");
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let outcome: PracticeSubmitResponse | null = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const obj = JSON.parse(line) as GradeStreamLine;
+      if (obj.type === "reasoning") {
+        onReasoningDelta?.(obj.delta);
+        continue;
+      }
+      if (obj.type === "error") {
+        throw new Error(typeof obj.detail === "string" ? obj.detail : JSON.stringify(obj.detail));
+      }
+      if (obj.type === "done") {
+        outcome = {
+          record: obj.record,
+          analysis: obj.analysis,
+          reference_answer: obj.reference_answer,
+          grading_reused: obj.grading_reused
+        };
+      }
+    }
+  }
+  if (buffer.trim()) {
+    const obj = JSON.parse(buffer) as GradeStreamLine;
+    if (obj.type === "error") {
+      throw new Error(typeof obj.detail === "string" ? obj.detail : JSON.stringify(obj.detail));
+    }
+    if (obj.type === "done") {
+      outcome = {
+        record: obj.record,
+        analysis: obj.analysis,
+        reference_answer: obj.reference_answer,
+        grading_reused: obj.grading_reused
+      };
+    }
+  }
+  if (!outcome) {
+    throw new Error("判题流未返回结果");
+  }
+  return outcome;
+}
+
 export async function submitPracticeAnswer(
   sessionId: number,
   questionId: number,
-  userAnswer: string
+  userAnswer: string,
+  onReasoningDelta?: (delta: string) => void
 ): Promise<PracticeSubmitResponse> {
-  const { data } = await apiClient.post<PracticeSubmitResponse>(
-    `/api/practice/sessions/${sessionId}/submit`,
-    {
-      question_id: questionId,
-      user_answer: userAnswer
-    },
-    { timeout: 120000 }
+  return consumeGradeSubmitNdjsonStream(
+    `/api/practice/sessions/${sessionId}/submit-stream`,
+    { question_id: questionId, user_answer: userAnswer },
+    onReasoningDelta
   );
-  return data;
 }
 
 export async function submitDailyPracticeAnswer(
   questionId: number,
-  userAnswer: string
+  userAnswer: string,
+  onReasoningDelta?: (delta: string) => void
 ): Promise<PracticeSubmitResponse> {
-  const { data } = await apiClient.post<PracticeSubmitResponse>("/api/practice/daily/submit", {
-    question_id: questionId,
-    user_answer: userAnswer
-  }, { timeout: 120000 });
-  return data;
+  return consumeGradeSubmitNdjsonStream(
+    "/api/practice/daily/submit-stream",
+    { question_id: questionId, user_answer: userAnswer },
+    onReasoningDelta
+  );
 }
 
 export async function skipPracticeAnswer(

@@ -29,6 +29,8 @@ const questionBankTotal = ref(0);
 const showDailyModal = ref(false);
 const dailyAnswer = ref("");
 const dailySubmitting = ref(false);
+const dailyGradingStream = ref("");
+const dailySubmitError = ref("");
 const dailyResult = ref<{ score: number; analysis: string; reference: string } | null>(null);
 const dailyDoneScore = ref<number | null>(null);
 
@@ -236,14 +238,20 @@ function openDailyModal() {
   showDailyModal.value = true;
   dailyAnswer.value = "";
   dailyResult.value = null;
+  dailyGradingStream.value = "";
+  dailySubmitError.value = "";
 }
 
 async function submitDailyAnswer() {
   if (!dailyQuestion.value) return;
   if (!dailyAnswer.value.trim()) return;
   dailySubmitting.value = true;
+  dailySubmitError.value = "";
+  dailyGradingStream.value = "";
   try {
-    const data = await submitDailyPracticeAnswer(dailyQuestion.value.id, dailyAnswer.value.trim());
+    const data = await submitDailyPracticeAnswer(dailyQuestion.value.id, dailyAnswer.value.trim(), (delta) => {
+      dailyGradingStream.value += delta;
+    });
     dailyResult.value = {
       score: data.record.ai_score,
       analysis: data.analysis,
@@ -251,6 +259,8 @@ async function submitDailyAnswer() {
     };
     dailyDoneScore.value = data.record.ai_score;
     await loadHomeData();
+  } catch (e) {
+    dailySubmitError.value = e instanceof Error ? e.message : String(e);
   } finally {
     dailySubmitting.value = false;
   }
@@ -379,10 +389,20 @@ async function submitDailyAnswer() {
               {{ dailySubmitting ? "判题中..." : "提交并判题" }}
             </button>
           </div>
+          <p v-if="dailySubmitError" style="color: #c0392b; font-size: 13px; margin-top: 8px;">{{ dailySubmitError }}</p>
           <LoadingIndicator
-            v-if="dailySubmitting"
-            text="AI 正在判题（约 10–30 秒；勿重复点击）"
+            v-if="dailySubmitting && !dailyGradingStream"
+            text="AI 正在判题（连接模型中…）"
           />
+          <div
+            v-if="dailySubmitting && dailyGradingStream"
+            style="margin-top: 10px; padding: 10px; border-radius: 8px; background: #f6f8fa; border: 1px solid #d0d7de;"
+          >
+            <div style="font-size: 12px; color: #57606a; margin-bottom: 6px;">AI 判题思路（流式）</div>
+            <pre
+              style="margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; color: #24292f; max-height: 200px; overflow: auto;"
+            >{{ dailyGradingStream }}</pre>
+          </div>
           <div v-if="dailyResult" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
             <p><strong>得分：</strong>{{ dailyResult.score }} / 10</p>
             <div>

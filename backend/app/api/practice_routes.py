@@ -1,13 +1,15 @@
+import json
 import logging
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import zoneinfo
 
-from app.core.database import get_db, is_sqlite
+from app.core.database import SessionLocal, get_db, is_sqlite
 from app.models.question import PracticeRecord, PracticeSession, Question
 from app.schemas.practice import (
     ALLOWED_SESSION_SIZES,
@@ -26,9 +28,9 @@ from app.schemas.practice import (
     WrongbookManualAddRequest,
     WrongbookPageOut,
 )
-from app.schemas.question import QuestionOut
+from app.schemas.question import PracticeRecordOut, QuestionOut
 from app.core.config import settings
-from app.services.ai_service import call_doubao_grade
+from app.services.ai_service import call_doubao_grade, iter_grade_stream_events
 from app.services.session_summary_service import generate_session_summary_if_needed, parse_stored_feedback
 from app.services.wrongbook_service import manual_add_to_wrongbook, update_wrongbook_after_attempt
 
@@ -405,6 +407,175 @@ def submit_daily_answer(payload: PracticeSubmitRequest, db: Session = Depends(ge
         "reference_answer": q.reference_answer,
         "grading_reused": False,
     }
+
+
+def _ndjson_stream_reasoning(delta: str) -> bytes:
+    return (json.dumps({"type": "reasoning", "delta": delta}, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _ndjson_stream_error(message: str) -> bytes:
+    return (json.dumps({"type": "error", "detail": message}, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _ndjson_stream_done(
+    record: PracticeRecord, question: Question, analysis: str, grading_reused: bool
+) -> bytes:
+    payload = {
+        "type": "done",
+        "record": PracticeRecordOut.model_validate(record).model_dump(mode="json"),
+        "analysis": analysis,
+        "reference_answer": question.reference_answer or "",
+        "grading_reused": grading_reused,
+    }
+    return (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _gen_session_submit_stream(session_id: int, payload: PracticeSubmitRequest):
+    db = SessionLocal()
+    try:
+        session = db.get(PracticeSession, session_id)
+        if not session:
+            yield _ndjson_stream_error("Practice session not found")
+            return
+        q = db.get(Question, payload.question_id)
+        if not q:
+            yield _ndjson_stream_error("Question not found")
+            return
+
+        existed = db.scalar(
+            select(PracticeRecord).where(
+                PracticeRecord.session_id == session_id,
+                PracticeRecord.question_id == payload.question_id,
+            )
+        )
+        if existed is not None:
+            logger.info(
+                "practice_submit_stream skip_ai reason=session_duplicate session_id=%s question_id=%s record_id=%s",
+                session_id,
+                payload.question_id,
+                existed.id,
+            )
+            yield _ndjson_stream_done(existed, q, existed.ai_answer, True)
+            return
+
+        grading: dict | None = None
+        for kind, data in iter_grade_stream_events(q.stem, payload.user_answer):
+            if kind == "reasoning":
+                yield _ndjson_stream_reasoning(str(data))
+            elif kind == "error":
+                yield _ndjson_stream_error(str(data))
+                return
+            elif kind == "graded":
+                grading = data
+
+        if not isinstance(grading, dict) or "score" not in grading or "analysis" not in grading:
+            yield _ndjson_stream_error("Grading incomplete")
+            return
+
+        record = PracticeRecord(
+            session_id=session_id,
+            question_id=payload.question_id,
+            user_answer=payload.user_answer,
+            ai_answer=grading["analysis"],
+            ai_score=grading["score"],
+        )
+        db.add(record)
+        db.flush()
+
+        update_wrongbook_after_attempt(db, payload.question_id, int(grading["score"]))
+        _update_mastery_by_formula(q, grading["score"])
+        _finalize_session_if_done(db, session)
+
+        db.commit()
+        db.refresh(record)
+        _try_session_summary_after_complete(db, session_id)
+        yield _ndjson_stream_done(record, q, grading["analysis"], False)
+    finally:
+        db.close()
+
+
+def _gen_daily_submit_stream(payload: PracticeSubmitRequest):
+    db = SessionLocal()
+    try:
+        q = db.get(Question, payload.question_id)
+        if not q:
+            yield _ndjson_stream_error("Question not found")
+            return
+
+        if settings.practice_daily_idempotency_enabled:
+            window_s = max(1, int(settings.practice_daily_idempotency_seconds))
+            cutoff = datetime.utcnow() - timedelta(seconds=window_s)
+            recent = db.scalar(
+                select(PracticeRecord)
+                .where(
+                    PracticeRecord.session_id.is_(None),
+                    PracticeRecord.question_id == payload.question_id,
+                    PracticeRecord.user_answer == payload.user_answer,
+                    PracticeRecord.created_at >= cutoff,
+                )
+                .order_by(PracticeRecord.id.desc())
+            )
+            if recent is not None:
+                logger.info(
+                    "daily_submit_stream skip_ai reason=idempotent_window question_id=%s record_id=%s window_s=%s",
+                    payload.question_id,
+                    recent.id,
+                    window_s,
+                )
+                yield _ndjson_stream_done(recent, q, recent.ai_answer, True)
+                return
+
+        grading: dict | None = None
+        for kind, data in iter_grade_stream_events(q.stem, payload.user_answer):
+            if kind == "reasoning":
+                yield _ndjson_stream_reasoning(str(data))
+            elif kind == "error":
+                yield _ndjson_stream_error(str(data))
+                return
+            elif kind == "graded":
+                grading = data
+
+        if not isinstance(grading, dict) or "score" not in grading or "analysis" not in grading:
+            yield _ndjson_stream_error("Grading incomplete")
+            return
+
+        record = PracticeRecord(
+            session_id=None,
+            question_id=payload.question_id,
+            user_answer=payload.user_answer,
+            ai_answer=grading["analysis"],
+            ai_score=grading["score"],
+        )
+        db.add(record)
+        db.flush()
+
+        update_wrongbook_after_attempt(db, payload.question_id, int(grading["score"]))
+        _update_mastery_by_formula(q, grading["score"])
+
+        db.commit()
+        db.refresh(record)
+        yield _ndjson_stream_done(record, q, grading["analysis"], False)
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/submit-stream")
+def submit_answer_stream(session_id: int, payload: PracticeSubmitRequest):
+    """NDJSON stream: `reasoning` lines (delta), then one `done` (same shape as PracticeSubmitResponse fields)."""
+    return StreamingResponse(
+        _gen_session_submit_stream(session_id, payload),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/daily/submit-stream")
+def submit_daily_answer_stream(payload: PracticeSubmitRequest):
+    return StreamingResponse(
+        _gen_daily_submit_stream(payload),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/sessions/{session_id}/skip", response_model=PracticeSubmitResponse)

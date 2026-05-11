@@ -33,6 +33,8 @@ const SESSION_SIZES: PracticeSessionSize[] = [5, 10, 15];
 const loading = ref(false);
 const submitting = ref(false);
 const error = ref("");
+/** MiMo / OpenAI 流式 reasoning_content，判题过程中展示 */
+const gradingStreamText = ref("");
 
 const sessionId = ref<number | null>(null);
 const questions = ref<Question[]>([]);
@@ -236,8 +238,16 @@ async function submitCurrent() {
   }
   submitting.value = true;
   error.value = "";
+  gradingStreamText.value = "";
   try {
-    const data = await submitPracticeAnswer(sessionId.value, currentQuestion.value.id, answer.value.trim());
+    const data = await submitPracticeAnswer(
+      sessionId.value,
+      currentQuestion.value.id,
+      answer.value.trim(),
+      (delta) => {
+        gradingStreamText.value += delta;
+      }
+    );
     perQuestionResult[currentQuestion.value.id] = {
       score: data.record.ai_score,
       analysis: data.analysis,
@@ -274,6 +284,7 @@ async function nextQuestion() {
   currentIndex.value += 1;
   answer.value = "";
   error.value = "";
+  gradingStreamText.value = "";
   if (finished.value) {
     summary.value = await fetchPracticeSummary(sessionId.value);
   }
@@ -435,9 +446,18 @@ onUnmounted(() => {
         <button @click="nextQuestion">下一题</button>
       </div>
       <LoadingIndicator
-        v-if="submitting"
-        text="AI 正在判题（云端约 10–30 秒，请稍候；勿重复点击）"
+        v-if="submitting && !gradingStreamText"
+        text="AI 正在判题（连接模型中…）"
       />
+      <div
+        v-if="submitting && gradingStreamText"
+        style="margin-top: 10px; padding: 10px; border-radius: 8px; background: #f6f8fa; border: 1px solid #d0d7de;"
+      >
+        <div style="font-size: 12px; color: #57606a; margin-bottom: 6px;">AI 判题思路（流式）</div>
+        <pre
+          style="margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; color: #24292f; max-height: 200px; overflow: auto;"
+        >{{ gradingStreamText }}</pre>
+      </div>
 
       <div v-if="perQuestionResult[currentQuestion.id]" style="margin-top: 10px; background: #f7fbff; padding: 10px; border-radius: 10px;">
         <p><strong>得分：</strong>{{ perQuestionResult[currentQuestion.id].score }} / 10</p>
