@@ -29,6 +29,10 @@ class QuestionOut(BaseModel):
     difficulty: int
     reference_answer: str
     mastery_score: int
+    wrongbook_active: bool = False
+    wrongbook_entered_at: datetime | None = None
+    wrongbook_last_wrong_at: datetime | None = None
+    wrongbook_cleared_at: datetime | None = None
     created_at: datetime
 
 

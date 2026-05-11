@@ -15,6 +15,7 @@ from app.schemas.question import (
 from app.services.ai_service import call_doubao_reference_answer
 from app.services.kb_chunk_service import sync_question_chunks
 from app.services.reference_answer_resolver import resolve_reference_for_stem
+from app.services.wrongbook_service import update_wrongbook_after_attempt
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -198,6 +199,7 @@ def create_question_record(question_id: int, payload: PracticeRecordCreate, db: 
     db.add(record)
     db.flush()
 
+    update_wrongbook_after_attempt(db, question_id, int(payload.ai_score))
     _update_mastery_by_formula(q, payload.ai_score)
 
     db.commit()

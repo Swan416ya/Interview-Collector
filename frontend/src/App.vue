@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  BookMarked,
   BookOpen,
   Brain,
   ClipboardList,
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/copilot", title: "知识库", desc: "RAG 问答与引用", icon: Sparkles },
   { to: "/import", title: "导入", desc: "AI 提取并入库面经题目", icon: UploadCloud },
   { to: "/practice", title: "训练", desc: "刷题/背题均支持 5/10/15 题", icon: Brain },
+  { to: "/wrongbook", title: "错题本", desc: "准入准出与仅错题开练", icon: BookMarked },
   { to: "/practice-history", title: "刷题记录", desc: "查看每轮会话与得分", icon: History },
   { to: "/answer-records", title: "答题记录", desc: "全部作答行、与热力图对账", icon: ClipboardList },
   { to: "/categories", title: "分类/岗位", desc: "统一维护分类与岗位", icon: FolderKanban }

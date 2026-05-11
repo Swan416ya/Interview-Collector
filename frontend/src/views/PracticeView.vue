@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import axios from "axios";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { Chart, registerables } from "chart.js";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
+
+Chart.register(...registerables);
 import { fetchQuestions, type Question } from "../api/questions";
 import {
   fetchPracticeCategories,
@@ -12,6 +15,7 @@ import {
   startPracticeSessionCustom,
   submitPracticeAnswer,
   type PracticeCategoryOption,
+  type PracticeQuestionPool,
   type PracticeSessionSize,
   type PracticeSummaryResponse
 } from "../api/practice";
@@ -22,6 +26,7 @@ const mode = ref<TrainMode>("practice");
 const categoryOptions = ref<PracticeCategoryOption[]>([]);
 const totalQuestionsAll = ref(0);
 const selectedCategory = ref("");
+const questionPool = ref<PracticeQuestionPool>("all");
 const sessionSize = ref<PracticeSessionSize>(10);
 const SESSION_SIZES: PracticeSessionSize[] = [5, 10, 15];
 
@@ -35,6 +40,8 @@ const currentIndex = ref(0);
 const answer = ref("");
 const perQuestionResult = reactive<Record<number, { score: number; analysis: string; reference: string }>>({});
 const summary = ref<PracticeSummaryResponse | null>(null);
+const sessionRadarCanvasRef = ref<HTMLCanvasElement | null>(null);
+let sessionRadarChart: Chart<"radar", number[], string> | null = null;
 
 const memorizeQuestions = ref<Question[]>([]);
 const memorizeIndex = ref(0);
@@ -65,6 +72,48 @@ const summaryMaxScore = computed(() => {
   return len > 0 ? len * 10 : 100;
 });
 
+function destroySessionRadarChart() {
+  sessionRadarChart?.destroy();
+  sessionRadarChart = null;
+}
+
+function buildSessionRadarChart() {
+  destroySessionRadarChart();
+  const fb = summary.value?.feedback;
+  const canvas = sessionRadarCanvasRef.value;
+  if (!fb?.dimensions?.length || !canvas) return;
+
+  sessionRadarChart = new Chart(canvas, {
+    type: "radar",
+    data: {
+      labels: fb.dimensions.map((d) => d.label),
+      datasets: [
+        {
+          label: "本轮维度分 (0–10)",
+          data: fb.dimensions.map((d) => d.score),
+          borderColor: "#0969da",
+          backgroundColor: "rgba(9, 105, 218, 0.22)",
+          pointBackgroundColor: "#0969da"
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        r: {
+          min: 0,
+          max: 10,
+          ticks: { stepSize: 2 }
+        }
+      },
+      plugins: {
+        legend: { display: true }
+      }
+    }
+  });
+}
+
 function shuffle<T>(arr: T[]): T[] {
   const copied = [...arr];
   for (let i = copied.length - 1; i > 0; i -= 1) {
@@ -86,7 +135,7 @@ function clearPracticeState() {
 }
 
 async function loadCategories() {
-  const data = await fetchPracticeCategories();
+  const data = await fetchPracticeCategories(questionPool.value);
   categoryOptions.value = data.categories;
   totalQuestionsAll.value = data.total_questions_all;
   if (!selectedCategory.value) {
@@ -97,16 +146,21 @@ async function loadCategories() {
 
 async function startCategoryPractice() {
   if (!canStartPractice.value) {
+    const poolHint = questionPool.value === "wrongbook" ? "当前错题本" : "全库";
     error.value = selectedCategory.value
-      ? `该分类题目不足 ${sessionSize.value} 道，请换分类或减小题量`
-      : `全库题目不足 ${sessionSize.value} 道，请减小题量或先导入题目`;
+      ? `该分类在${poolHint}中不足 ${sessionSize.value} 道，请换分类或减小题量`
+      : `${poolHint}题目不足 ${sessionSize.value} 道，请减小题量、先刷题产生错题，或切回全库`;
     return;
   }
   loading.value = true;
   error.value = "";
   clearPracticeState();
   try {
-    const data = await startPracticeSession(selectedCategory.value || undefined, sessionSize.value);
+    const data = await startPracticeSession(
+      selectedCategory.value || undefined,
+      sessionSize.value,
+      questionPool.value
+    );
     sessionId.value = data.session_id;
     questions.value = data.questions;
   } catch (e) {
@@ -225,6 +279,18 @@ async function nextQuestion() {
   }
 }
 
+watch(
+  () => summary.value,
+  async () => {
+    await nextTick();
+    buildSessionRadarChart();
+  }
+);
+
+watch(questionPool, () => {
+  void loadCategories();
+});
+
 watch(sessionSize, () => {
   memorizePrepared.value = false;
   memorizeQuestions.value = [];
@@ -248,6 +314,10 @@ watch(mode, (m) => {
 });
 
 onMounted(loadCategories);
+
+onUnmounted(() => {
+  destroySessionRadarChart();
+});
 </script>
 
 <template>
@@ -256,9 +326,19 @@ onMounted(loadCategories);
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>
 
     <div class="swift-card" style="display: grid; gap: 10px;">
-      <div style="display: flex; gap: 8px;">
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
         <button :disabled="mode === 'practice'" @click="mode = 'practice'">刷题模式</button>
         <button :disabled="mode === 'memorize'" @click="mode = 'memorize'">背题模式</button>
+        <span style="width: 1px; height: 20px; background: #e5e7eb; margin: 0 4px;" />
+        <span style="font-size: 13px; color: #444;">题池：</span>
+        <label style="display: inline-flex; gap: 4px; align-items: center; cursor: pointer;">
+          <input v-model="questionPool" type="radio" value="all" />
+          全库
+        </label>
+        <label style="display: inline-flex; gap: 4px; align-items: center; cursor: pointer;">
+          <input v-model="questionPool" type="radio" value="wrongbook" />
+          仅错题本
+        </label>
       </div>
       <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
         <span style="font-size: 14px; color: #444;">本轮题量：</span>
@@ -269,7 +349,9 @@ onMounted(loadCategories);
       </div>
       <div style="display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;">
         <select v-model="selectedCategory">
-          <option v-if="mode === 'practice'" value="">全部分类随机</option>
+          <option v-if="mode === 'practice'" value="">
+            {{ questionPool === "wrongbook" ? "错题本·全部分类随机" : "全部分类随机" }}
+          </option>
           <option
             v-for="item in categoryOptions"
             :key="item.category"
@@ -284,7 +366,12 @@ onMounted(loadCategories);
         <button @click="loadCategories">刷新分类</button>
       </div>
       <p v-if="mode === 'practice'" style="margin: 0; font-size: 13px; color: #667085;">
-        全库共 {{ totalQuestionsAll }} 题；选「全部分类」时需全库 ≥ 所选题量，选具体分类时需该分类 ≥ 所选题量。
+        <template v-if="questionPool === 'all'">
+          全库共 {{ totalQuestionsAll }} 题；选「全部分类」时需全库 ≥ 所选题量，选具体分类时需该分类 ≥ 所选题量。
+        </template>
+        <template v-else>
+          当前错题本共 {{ totalQuestionsAll }} 题（默认 AI 判分 ≤6 或跳过会进入；最近 3 次均 ≥8 分准出，见环境变量 WRONGBOOK_*）。需 ≥ 所选题量才可开练。
+        </template>
       </p>
       <p v-if="mode === 'memorize'" style="margin: 0; font-size: 13px; color: #667085;">
         背题需选择<strong>具体分类</strong>（不能用「全部分类」），且该分类题量 ≥ {{ sessionSize }}。
@@ -376,8 +463,24 @@ onMounted(loadCategories);
     <div v-if="finished && summary" class="swift-card" style="margin-top: 12px;">
       <h3>本轮完成</h3>
       <p><strong>总分：</strong>{{ summary.total_score }} / {{ summaryMaxScore }}</p>
-      <p><strong>记录ID：</strong>{{ summary.record_ids.join(", ") }}</p>
-      <p><strong>会话ID：</strong>{{ summary.session_id }}</p>
+      <p v-if="summary.summary_pending" style="color: #9a6700; font-size: 14px;">
+        会话总评正在生成或暂时失败，可刷新本页或稍后在「刷题记录」中打开同一会话重试加载。
+      </p>
+      <template v-if="summary.feedback">
+        <h4 style="margin-top: 16px;">AI 会话总评</h4>
+        <div
+          style="font-size: 14px; color: #374151; margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px;"
+        >
+          <MarkdownRenderer :source="summary.feedback.summary_text" />
+        </div>
+        <p style="font-size: 13px; color: #6b7280; margin-bottom: 6px;">五维雷达（0–10）</p>
+        <div style="position: relative; height: 280px; max-width: 520px;">
+          <canvas ref="sessionRadarCanvasRef" />
+        </div>
+      </template>
+      <p style="font-size: 12px; color: #6b7280; margin-top: 12px;">
+        <strong>记录ID：</strong>{{ summary.record_ids.join(", ") }} ｜ <strong>会话ID：</strong>{{ summary.session_id }}
+      </p>
     </div>
   </section>
 </template>

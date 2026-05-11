@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.kb import KbCitation, KbQueryRequest, KbQueryResponse, KbReindexResponse
+from app.models.document_chunk import DocumentChunk
+from app.models.question import Question
+from app.schemas.kb import KbCitation, KbQueryRequest, KbQueryResponse, KbReindexResponse, KbStatsResponse
 from app.services.ai_service import call_doubao_kb_query
 from app.services.kb_chunk_service import reindex_all_questions, search_chunks
 
 router = APIRouter(prefix="/api/kb", tags=["knowledge-base"])
 
 KB_NOT_FOUND = "知识库中未找到相关条目"
+
+
+@router.get("/stats", response_model=KbStatsResponse)
+def kb_stats(db: Session = Depends(get_db)):
+    chunk_count = int(db.scalar(select(func.count()).select_from(DocumentChunk)) or 0)
+    question_count = int(db.scalar(select(func.count()).select_from(Question)) or 0)
+    return KbStatsResponse(chunk_count=chunk_count, question_count=question_count)
 
 
 def _excerpt(text: str, max_len: int = 240) -> str:

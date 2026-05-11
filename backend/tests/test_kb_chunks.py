@@ -2,7 +2,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.core.database import SessionLocal
 from app.main import app
+from app.services.kb_chunk_service import search_chunks
 
 
 def test_kb_query_empty_corpus_returns_not_found() -> None:
@@ -40,6 +42,28 @@ def test_kb_query_returns_answer_and_citations(mock_kb) -> None:
     assert len(body["citations"]) >= 1
     assert body["citations"][0]["question_id"] == cr.json()["id"]
     assert body["citations"][0]["source_type"] in ("question_stem", "question_reference")
+
+
+def test_search_chunks_finds_latin_inside_cjk_question() -> None:
+    """口语问法「Redis是干什么用的」应能命中题干里的 Redis（无需整句子串）。"""
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/questions",
+            json={
+                "stem": "请简述 Redis 的典型使用场景？",
+                "category": "未分类",
+                "difficulty": 3,
+                "reference_answer": "常用作缓存、会话与排行榜等。",
+            },
+        )
+        assert res.status_code == 200, res.text
+    db = SessionLocal()
+    try:
+        hits = search_chunks(db, "Redis是干什么用的", 5)
+        assert len(hits) >= 1
+        assert any("Redis" in (h.text or "") for h in hits)
+    finally:
+        db.close()
 
 
 def test_kb_reindex_processes_existing_question() -> None:

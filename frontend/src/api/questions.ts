@@ -7,6 +7,10 @@ export interface Question {
   difficulty: number;
   reference_answer?: string;
   mastery_score: number;
+  wrongbook_active?: boolean;
+  wrongbook_entered_at?: string | null;
+  wrongbook_last_wrong_at?: string | null;
+  wrongbook_cleared_at?: string | null;
   created_at: string;
 }
 

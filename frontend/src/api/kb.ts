@@ -25,3 +25,8 @@ export async function postKbReindex(): Promise<{ questions_processed: number }> 
   const res = await apiClient.post<{ questions_processed: number }>("/api/kb/reindex");
   return res.data;
 }
+
+export async function fetchKbStats(): Promise<{ chunk_count: number; question_count: number }> {
+  const res = await apiClient.get<{ chunk_count: number; question_count: number }>("/api/kb/stats");
+  return res.data;
+}

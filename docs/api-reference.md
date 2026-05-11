@@ -59,6 +59,20 @@ When any API is added/removed/changed, update this file in the same commit.
 }
 ```
 
+### Knowledge base stats
+
+- Method: `GET`
+- Path: `/api/kb/stats`
+- Description: Returns row counts for `document_chunks` and `questions` so you can verify indexing (if `chunk_count` is 0 while `question_count` > 0, run `POST /api/kb/reindex`).
+- Response example:
+
+```json
+{
+  "chunk_count": 412,
+  "question_count": 206
+}
+```
+
 ### Knowledge base reindex
 
 - Method: `POST`
@@ -226,6 +240,8 @@ When any API is added/removed/changed, update this file in the same commit.
 
 - Method: `GET`
 - Path: `/api/practice/categories`
+- Query (optional):
+  - `pool`: `all` (default) or `wrongbook` — when `wrongbook`, counts only questions with `wrongbook_active=true`
 - Description:
   - returns `{ "categories": [...], "total_questions_all": N }`
   - each category: `total_questions`, `selectable` (true when count ≥ 5, i.e. enough for smallest session)
@@ -249,11 +265,29 @@ When any API is added/removed/changed, update this file in the same commit.
 - Query (optional):
   - `category`: limit pool to this category; omit for all categories
   - `count`: **5, 10, or 15** (default `10`)
+  - `pool`: `all` (default) or `wrongbook` — `wrongbook` only picks questions currently in the wrongbook (`wrongbook_active=true`)
 - Description:
   - random pick `count` questions
   - persists `practice_sessions.question_count` for completion logic (session completes when that many records exist)
   - if pool has fewer than `count` questions, return 400 with clear message
+  - after each **new** graded attempt (submit / daily submit / skip), wrongbook state is updated (see env `WRONGBOOK_*`): default admit when `ai_score <= 6` (skip is 0); discharge when the latest **3** attempts are all `>= 8`
 - Response includes `question_count` (same as `count`)
+
+### Wrongbook list
+
+- Method: `GET`
+- Path: `/api/practice/wrongbook`
+- Query:
+  - `state`: `in` (currently active wrongbook), `out` (cleared / graduated), `all` (ever entered wrongbook)
+  - `category` (optional), `page`, `page_size`
+- Response: `{ "total", "page", "page_size", "items": Question[] }` — each question includes `wrongbook_*` fields
+
+### Wrongbook manual add
+
+- Method: `POST`
+- Path: `/api/practice/wrongbook/manual`
+- Request body: `{ "question_id": 123 }`
+- Description: force question into wrongbook (same flags as automatic admit); does not create a `PracticeRecord`
 
 ### Start Custom Practice Session
 
@@ -283,6 +317,7 @@ When any API is added/removed/changed, update this file in the same commit.
   - update question mastery score by formula:
     - `new_mastery = old_mastery * 0.7 + latest_score(0-100) * 0.3`
   - 若该 `session_id` 下该 `question_id` **已有作答或 skip 记录**，返回 **200** 与**已有** `PracticeRecord`（`analysis` / `ai_score` 与首次一致），**不再次调用**阅卷；`grading_reused=true`（与 daily 幂等语义一致）
+  - 当本次提交使会话**达到** `question_count`（最后一题），后端在 `commit` 之后会**异步尝试**生成 **1 次**会话总评（LLM），失败仅记日志，不影响本接口 200
 - Response:
   - `grading_reused`：首次提交为 `false`；重复提交（连点或重放）为 `true`
 
@@ -325,12 +360,43 @@ When any API is added/removed/changed, update this file in the same commit.
   - this 0 score is included in session total score and mastery update formula
   - 若该题在本会话已有记录，返回 **200** 与已有记录，`grading_reused=true`（不重复写入）
   - 首次 skip 时 `grading_reused` 为 `false`
+  - 若 skip 为会话**最后一题**且会话因此完结，同样在 `commit` 后尝试生成会话总评（与 submit 一致）
 
 ### Practice Session Summary
 
 - Method: `GET`
 - Path: `/api/practice/sessions/{session_id}/summary`
-- Response includes `question_count`; max score = `question_count * 10`
+- Description:
+  - 若会话尚未写 `completed_at`，本接口会先根据已有 `PracticeRecord` 补全 `completed_at` / `total_score`（与最后一题提交逻辑一致）
+  - 会话已完结且尚未写入总评时，会尝试调用 LLM 生成并持久化（幂等：`summary_done` 为真则不再调用）
+- Response:
+  - `question_count`；`total_score`；`record_ids`；`completed_at`
+  - `feedback`：会话总评，结构如下；未完成或解析失败时为 `null`
+  - `summary_pending`：会话已完结但总评尚未成功落库时为 `true`（例如 LLM 超时；可再次 GET 触发重试）
+
+```json
+{
+  "session_id": 1,
+  "total_score": 72,
+  "record_ids": [10, 11, 12],
+  "completed_at": "2026-05-08T12:00:00",
+  "question_count": 5,
+  "feedback": {
+    "summary_text": "总体表现……",
+    "dimensions": [
+      { "key": "correctness", "label": "正确性", "score": 7 },
+      { "key": "completeness", "label": "完整性", "score": 6 },
+      { "key": "articulation", "label": "表达力", "score": 8 },
+      { "key": "depth", "label": "知识深度", "score": 5 },
+      { "key": "consistency", "label": "稳定性", "score": 7 }
+    ]
+  },
+  "summary_pending": false
+}
+```
+
+- 环境变量（可选）：`AI_SESSION_SUMMARY_MAX_OUTPUT_TOKENS`（默认 `1500`），控制总评 LLM 的 `max_output_tokens`
+- Max score = `question_count * 10`（每题 0–10 分合计为展示用；总评维度为独立的 0–10 分）
 
 ### Practice Session List
 

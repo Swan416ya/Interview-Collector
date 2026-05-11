@@ -20,3 +20,8 @@ class KbQueryResponse(BaseModel):
 
 class KbReindexResponse(BaseModel):
     questions_processed: int
+
+
+class KbStatsResponse(BaseModel):
+    chunk_count: int
+    question_count: int

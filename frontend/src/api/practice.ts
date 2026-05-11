@@ -36,12 +36,25 @@ export interface PracticeSubmitResponse {
   grading_reused?: boolean;
 }
 
+export interface SessionDimension {
+  key: string;
+  label: string;
+  score: number;
+}
+
+export interface SessionFeedback {
+  summary_text: string;
+  dimensions: SessionDimension[];
+}
+
 export interface PracticeSummaryResponse {
   session_id: number;
   total_score: number;
   record_ids: number[];
   completed_at: string | null;
   question_count?: number;
+  feedback?: SessionFeedback | null;
+  summary_pending?: boolean;
 }
 
 export interface PracticeSessionListItem {
@@ -50,6 +63,7 @@ export interface PracticeSessionListItem {
   question_count?: number;
   completed_at: string | null;
   created_at: string;
+  summary_done?: boolean;
 }
 
 export interface PracticeRecordFeedItem {
@@ -95,11 +109,14 @@ export interface PracticeSessionRecordsResponse {
 
 export type PracticeSessionSize = 5 | 10 | 15;
 
+export type PracticeQuestionPool = "all" | "wrongbook";
+
 export async function startPracticeSession(
   category: string | undefined,
-  count: PracticeSessionSize
+  count: PracticeSessionSize,
+  pool: PracticeQuestionPool = "all"
 ): Promise<PracticeStartResponse> {
-  const params: Record<string, string | number> = { count };
+  const params: Record<string, string | number> = { count, pool };
   if (category) params.category = category;
   const { data } = await apiClient.post<PracticeStartResponse>("/api/practice/sessions/start", null, { params });
   return data;
@@ -179,8 +196,36 @@ export async function fetchPracticeSessionRecords(sessionId: number): Promise<Pr
   return data;
 }
 
-export async function fetchPracticeCategories(): Promise<PracticeCategoriesResponse> {
-  const { data } = await apiClient.get<PracticeCategoriesResponse>("/api/practice/categories");
+export async function fetchPracticeCategories(
+  pool: PracticeQuestionPool = "all"
+): Promise<PracticeCategoriesResponse> {
+  const { data } = await apiClient.get<PracticeCategoriesResponse>("/api/practice/categories", {
+    params: { pool }
+  });
+  return data;
+}
+
+export interface WrongbookPage {
+  total: number;
+  page: number;
+  page_size: number;
+  items: Question[];
+}
+
+export async function fetchWrongbookPage(params: {
+  state?: "in" | "out" | "all";
+  category?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<WrongbookPage> {
+  const { data } = await apiClient.get<WrongbookPage>("/api/practice/wrongbook", { params });
+  return data;
+}
+
+export async function addWrongbookManual(questionId: number): Promise<Question> {
+  const { data } = await apiClient.post<Question>("/api/practice/wrongbook/manual", {
+    question_id: questionId
+  });
   return data;
 }
 

@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import zoneinfo
 
-from app.core.database import get_db
+from app.core.database import get_db, is_sqlite
 from app.models.question import PracticeRecord, PracticeSession, Question
 from app.schemas.practice import (
     ALLOWED_SESSION_SIZES,
@@ -23,9 +23,14 @@ from app.schemas.practice import (
     PracticeSessionSummaryResponse,
     PracticeSubmitResponse,
     PracticeSubmitRequest,
+    WrongbookManualAddRequest,
+    WrongbookPageOut,
 )
+from app.schemas.question import QuestionOut
 from app.core.config import settings
 from app.services.ai_service import call_doubao_grade
+from app.services.session_summary_service import generate_session_summary_if_needed, parse_stored_feedback
+from app.services.wrongbook_service import manual_add_to_wrongbook, update_wrongbook_after_attempt
 
 router = APIRouter(prefix="/api/practice", tags=["practice"])
 logger = logging.getLogger(__name__)
@@ -188,6 +193,19 @@ def _finalize_session_if_done(db: Session, session: PracticeSession) -> None:
         session.completed_at = datetime.utcnow()
 
 
+def _try_session_summary_after_complete(db: Session, session_id: int) -> None:
+    """After main transaction commits, best-effort one LLM call for session radar (does not fail the practice API)."""
+    sess = db.get(PracticeSession, session_id)
+    if not sess or not sess.completed_at or sess.summary_done:
+        return
+    try:
+        generate_session_summary_if_needed(db, sess)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("session_summary failed session_id=%s", session_id)
+
+
 @router.get("/ping")
 def practice_ping() -> dict:
     return {"message": "practice module ready"}
@@ -197,16 +215,24 @@ def practice_ping() -> dict:
 def start_practice_session(
     category: str | None = None,
     count: int = Query(10, description="Number of questions: 5, 10, or 15"),
+    pool: str = Query("all", description="all: full bank; wrongbook: only wrongbook_active questions"),
     db: Session = Depends(get_db),
 ):
     if count not in ALLOWED_SESSION_SIZES:
         raise HTTPException(status_code=400, detail="count must be 5, 10, or 15")
+    if pool not in ("all", "wrongbook"):
+        raise HTTPException(status_code=400, detail="pool must be all or wrongbook")
     stmt = select(Question)
+    if pool == "wrongbook":
+        stmt = stmt.where(Question.wrongbook_active.is_(True))
     if category:
         stmt = stmt.where(Question.category == category)
-    questions = db.scalars(stmt.order_by(func.rand()).limit(count)).all()
+    order_rand = func.random() if is_sqlite else func.rand()
+    questions = db.scalars(stmt.order_by(order_rand).limit(count)).all()
     if len(questions) < count:
         scope = f"Category '{category}'" if category else "Question bank (all categories)"
+        if pool == "wrongbook":
+            scope = f"Wrongbook in {scope}" if category else "Wrongbook (all categories)"
         raise HTTPException(
             status_code=400,
             detail=f"{scope} has only {len(questions)} question(s); need at least {count} to start this session",
@@ -239,13 +265,24 @@ def start_practice_session_custom(payload: PracticeSessionCustomStartRequest, db
 
 
 @router.get("/categories", response_model=PracticeCategoriesResponse)
-def list_practice_categories(db: Session = Depends(get_db)):
-    rows = db.execute(
-        select(Question.category, func.count(Question.id))
-        .group_by(Question.category)
-        .order_by(Question.category.asc())
-    ).all()
-    total_all = int(db.scalar(select(func.count()).select_from(Question)) or 0)
+def list_practice_categories(
+    pool: str = Query("all", description="all | wrongbook"),
+    db: Session = Depends(get_db),
+):
+    if pool not in ("all", "wrongbook"):
+        raise HTTPException(status_code=400, detail="pool must be all or wrongbook")
+    cat_stmt = select(Question.category, func.count(Question.id)).group_by(Question.category)
+    if pool == "wrongbook":
+        cat_stmt = (
+            select(Question.category, func.count(Question.id))
+            .where(Question.wrongbook_active.is_(True))
+            .group_by(Question.category)
+        )
+    rows = db.execute(cat_stmt.order_by(Question.category.asc())).all()
+    total_stmt = select(func.count()).select_from(Question)
+    if pool == "wrongbook":
+        total_stmt = total_stmt.where(Question.wrongbook_active.is_(True))
+    total_all = int(db.scalar(total_stmt) or 0)
     categories = [
         {
             "category": category or "未分类",
@@ -297,12 +334,14 @@ def submit_answer(session_id: int, payload: PracticeSubmitRequest, db: Session =
     db.add(record)
     db.flush()
 
+    update_wrongbook_after_attempt(db, payload.question_id, int(grading["score"]))
     _update_mastery_by_formula(q, grading["score"])
 
     _finalize_session_if_done(db, session)
 
     db.commit()
     db.refresh(record)
+    _try_session_summary_after_complete(db, session_id)
     return {
         "record": record,
         "analysis": grading["analysis"],
@@ -355,6 +394,7 @@ def submit_daily_answer(payload: PracticeSubmitRequest, db: Session = Depends(ge
     db.add(record)
     db.flush()
 
+    update_wrongbook_after_attempt(db, payload.question_id, int(grading["score"]))
     _update_mastery_by_formula(q, grading["score"])
 
     db.commit()
@@ -407,18 +447,66 @@ def skip_answer(session_id: int, payload: PracticeSkipRequest, db: Session = Dep
     db.add(record)
     db.flush()
 
+    update_wrongbook_after_attempt(db, payload.question_id, 0)
     _update_mastery_by_formula(q, 0)
 
     _finalize_session_if_done(db, session)
 
     db.commit()
     db.refresh(record)
+    _try_session_summary_after_complete(db, session_id)
     return {
         "record": record,
         "analysis": analysis,
         "reference_answer": q.reference_answer,
         "grading_reused": False,
     }
+
+
+@router.get("/wrongbook", response_model=WrongbookPageOut)
+def list_wrongbook(
+    state: str = Query("in", description="in: currently wrong; out: cleared; all: ever entered wrongbook"),
+    category: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    if state not in ("in", "out", "all"):
+        raise HTTPException(status_code=400, detail="state must be in, out, or all")
+    filters = []
+    if category and category.strip():
+        filters.append(Question.category == category.strip())
+    if state == "in":
+        filters.append(Question.wrongbook_active.is_(True))
+    elif state == "out":
+        filters.append(Question.wrongbook_active.is_(False))
+        filters.append(Question.wrongbook_cleared_at.isnot(None))
+    else:
+        filters.append(Question.wrongbook_entered_at.isnot(None))
+
+    count_stmt = select(func.count(Question.id))
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = int(db.scalar(count_stmt) or 0)
+
+    stmt = select(Question)
+    if filters:
+        stmt = stmt.where(*filters)
+    stmt = stmt.order_by(Question.id.desc())
+    offset = (page - 1) * page_size
+    items = db.scalars(stmt.offset(offset).limit(page_size)).all()
+    return WrongbookPageOut(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.post("/wrongbook/manual", response_model=QuestionOut)
+def wrongbook_manual_add(payload: WrongbookManualAddRequest, db: Session = Depends(get_db)):
+    q = db.get(Question, payload.question_id)
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    manual_add_to_wrongbook(db, q)
+    db.commit()
+    db.refresh(q)
+    return q
 
 
 @router.get("/sessions/{session_id}/summary", response_model=PracticeSessionSummaryResponse)
@@ -432,12 +520,30 @@ def practice_session_summary(session_id: int, db: Session = Depends(get_db)):
         session.total_score = total_score
         session.completed_at = datetime.utcnow()
         db.commit()
+        db.refresh(session)
+
+    feedback = parse_stored_feedback(session)
+    if session.completed_at and not session.summary_done:
+        try:
+            feedback = generate_session_summary_if_needed(db, session)
+            db.commit()
+            db.refresh(session)
+        except Exception:
+            db.rollback()
+            logger.exception("session_summary on GET failed session_id=%s", session_id)
+        session = db.get(PracticeSession, session_id)
+        if session:
+            feedback = parse_stored_feedback(session)
+
+    summary_pending = bool(session and session.completed_at and not session.summary_done)
     return {
         "session_id": session_id,
         "total_score": total_score,
         "record_ids": [r.id for r in records],
-        "completed_at": session.completed_at,
-        "question_count": session.question_count,
+        "completed_at": session.completed_at if session else None,
+        "question_count": session.question_count if session else 0,
+        "feedback": feedback,
+        "summary_pending": summary_pending,
     }
 
 

@@ -45,6 +45,15 @@ def _extract_json_object(text: str) -> dict:
             ) from exc
 
 
+def _normalize_ai_provider() -> str:
+    p = (settings.ai_provider or "ark_responses").strip().lower()
+    if p in ("ark", "ark_responses", "volcengine", "doubao"):
+        return "ark_responses"
+    if p in ("openai", "openai_compatible", "openai-compat", "compatible"):
+        return "openai_compatible"
+    return p
+
+
 def _extract_output_text_from_response(data: dict) -> str:
     # 1) Preferred shortcut if provider gives flattened output_text
     output_text = data.get("output_text")
@@ -84,14 +93,17 @@ def _extract_output_text_from_response(data: dict) -> str:
                 if isinstance(content, str) and content.strip():
                     return content
                 if isinstance(content, list):
-                    chunks: list[str] = []
+                    chunks_msg: list[str] = []
                     for part in content:
                         if isinstance(part, dict):
                             text = part.get("text")
                             if isinstance(text, str) and text.strip():
-                                chunks.append(text)
-                    if chunks:
-                        return "\n".join(chunks)
+                                chunks_msg.append(text)
+                    if chunks_msg:
+                        return "\n".join(chunks_msg)
+                rc = message.get("reasoning_content")
+                if isinstance(rc, str) and rc.strip():
+                    return rc
 
     # 4) Give caller a structured preview in error path
     return ""
@@ -105,7 +117,7 @@ def _post_doubao_responses_op(
     max_output_tokens: int | None = None,
     thinking_type: str | None = None,
 ) -> tuple[dict, dict]:
-    """Shared Ark /responses call; logs ai_call_prepare / ai_call_start with given op tag."""
+    """Ark /responses or OpenAI-compatible /chat/completions (e.g. Xiaomi MiMo Token Plan)."""
     if not settings.ai_api_key or not settings.ai_model:
         raise HTTPException(
             status_code=500,
@@ -122,31 +134,61 @@ def _post_doubao_responses_op(
             },
         )
 
-    url = f"{settings.ai_base_url.rstrip('/')}/responses"
+    provider = _normalize_ai_provider()
+    base = settings.ai_base_url.rstrip("/")
     headers = {
         "Authorization": f"Bearer {settings.ai_api_key}",
         "Content-Type": "application/json",
     }
     tokens = max_output_tokens if max_output_tokens is not None else settings.ai_max_output_tokens
-    payload = {
-        "model": settings.ai_model,
-        "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
-            {"role": "user", "content": [{"type": "input_text", "text": raw_text}]},
-        ],
-        "max_output_tokens": tokens,
-        "temperature": 0,
-        "thinking": {"type": thinking_type or settings.ai_thinking_type},
-    }
 
-    logger.info(
-        "ai_call_prepare op=%s prompt_len=%s user_text_len=%s thinking=%s max_out=%s",
-        op,
-        len(prompt),
-        len(raw_text),
-        thinking_type or settings.ai_thinking_type,
-        tokens,
-    )
+    if provider == "openai_compatible":
+        url = f"{base}/chat/completions"
+        payload = {
+            "model": settings.ai_model,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": raw_text},
+            ],
+            "max_tokens": tokens,
+            "temperature": 0,
+        }
+        logger.info(
+            "ai_call_prepare op=%s provider=openai_compatible prompt_len=%s user_text_len=%s max_tokens=%s",
+            op,
+            len(prompt),
+            len(raw_text),
+            tokens,
+        )
+    elif provider == "ark_responses":
+        url = f"{base}/responses"
+        payload = {
+            "model": settings.ai_model,
+            "input": [
+                {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": raw_text}]},
+            ],
+            "max_output_tokens": tokens,
+            "temperature": 0,
+            "thinking": {"type": thinking_type or settings.ai_thinking_type},
+        }
+        logger.info(
+            "ai_call_prepare op=%s provider=ark_responses prompt_len=%s user_text_len=%s thinking=%s max_out=%s",
+            op,
+            len(prompt),
+            len(raw_text),
+            thinking_type or settings.ai_thinking_type,
+            tokens,
+        )
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Unsupported AI_PROVIDER",
+                "ai_provider": settings.ai_provider,
+                "hint": "Use ark_responses or openai_compatible",
+            },
+        )
 
     timeout = httpx.Timeout(
         timeout=settings.ai_timeout_seconds,
@@ -159,9 +201,10 @@ def _post_doubao_responses_op(
     for attempt in range(settings.ai_retries + 1):
         started = time.perf_counter()
         logger.info(
-            "ai_call_start op=%s attempt=%s model=%s base_url=%s prompt_len=%s user_text_len=%s",
+            "ai_call_start op=%s attempt=%s provider=%s model=%s base_url=%s prompt_len=%s user_text_len=%s",
             op,
             attempt + 1,
+            provider,
             settings.ai_model,
             settings.ai_base_url,
             len(prompt),
@@ -285,6 +328,38 @@ def call_doubao_kb_query(user_question: str, fragments: list[dict]) -> dict:
         raw,
         op="kb_query",
         max_output_tokens=settings.ai_kb_max_output_tokens,
+        thinking_type="disabled",
+    )
+    return parsed
+
+
+SESSION_SUMMARY_SYSTEM_PROMPT = """
+你是计算机面试刷题会话总评助手。用户刚完成一轮固定题量的作答（每题已有 0-10 的得分与简短解析）。请根据下方逐题摘要给出本轮整体评价。
+规则：
+1) 只输出 JSON，不要任何解释文字。
+2) summary_text：中文总评，不超过 280 字，可含 Markdown 列表；指出主要薄弱点与巩固建议。
+3) dimensions：恰好 **5** 个维度，每个含 key（英文蛇形，唯一）、label（中文 2–6 字）、score（0-10 整数）。建议五维为：正确性、完整性、表达清晰度、知识深度、临场稳定性（可按作答表现微调分数，不必与单题均分机械一致）。
+4) 输出格式：
+{
+  "summary_text": "string",
+  "dimensions": [
+    {"key": "correctness", "label": "正确性", "score": 7},
+    {"key": "completeness", "label": "完整性", "score": 6},
+    {"key": "articulation", "label": "表达力", "score": 7},
+    {"key": "depth", "label": "知识深度", "score": 5},
+    {"key": "consistency", "label": "稳定性", "score": 6}
+  ]
+}
+""".strip()
+
+
+def call_doubao_session_summary(session_digest: str) -> dict:
+    """One-shot session-level feedback; returns parsed JSON dict."""
+    parsed, _ = _post_doubao_responses_op(
+        SESSION_SUMMARY_SYSTEM_PROMPT,
+        session_digest,
+        op="session_summary",
+        max_output_tokens=settings.ai_session_summary_max_output_tokens,
         thinking_type="disabled",
     )
     return parsed

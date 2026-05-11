@@ -15,6 +15,10 @@ class Question(Base):
     difficulty: Mapped[int] = mapped_column(Integer, default=3)
     reference_answer: Mapped[str] = mapped_column(Text, default="")
     mastery_score: Mapped[int] = mapped_column(Integer, default=0)
+    wrongbook_active: Mapped[bool] = mapped_column(default=False, nullable=False)
+    wrongbook_entered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    wrongbook_last_wrong_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    wrongbook_cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
@@ -45,6 +49,8 @@ class PracticeSession(Base):
     total_score: Mapped[int] = mapped_column(Integer, default=0)  # sum of ai_score, max question_count * 10
     question_count: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    session_feedback_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_done: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,

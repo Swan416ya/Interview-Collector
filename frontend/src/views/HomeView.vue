@@ -189,24 +189,30 @@ function cellTitle(cell: { date: string; count: number }, today: string): string
 async function loadHomeData() {
   loading.value = true;
   try {
-    const [act, questions, sessions] = await Promise.all([
+    // 不要用 Promise.all 绑死三请求：题库接口若 500（例如 DB 未跑最新迁移），不应拖垮热力图与得分趋势。
+    const [actRes, sessRes, qRes] = await Promise.allSettled([
       fetchPracticeActivity(),
-      fetchQuestions({ sort_by: "id", sort_order: "asc" }),
-      fetchPracticeSessions()
+      fetchPracticeSessions(),
+      fetchQuestions({ sort_by: "id", sort_order: "asc" })
     ]);
-    activity.value = act;
-    practiceSessions.value = sessions;
 
-    if (questions.length) {
-      const sorted = [...questions].sort((a, b) => a.id - b.id);
+    activity.value = actRes.status === "fulfilled" ? actRes.value : null;
+    practiceSessions.value = sessRes.status === "fulfilled" ? sessRes.value : [];
+
+    if (qRes.status === "fulfilled" && qRes.value.length > 0) {
+      const sorted = [...qRes.value].sort((a, b) => a.id - b.id);
       questionBankTotal.value = sorted.length;
       const todayKey = toDateKey(new Date());
       const { question, rank } = pickDailyQuestion(sorted, todayKey);
       dailyQuestionRank.value = rank;
       dailyQuestion.value = question;
-      const records = await fetchQuestionRecords(question.id);
-      const todayRecord = records.find((r) => (r.created_at ?? "").slice(0, 10) === todayKey);
-      dailyDoneScore.value = todayRecord ? Number(todayRecord.ai_score) : null;
+      try {
+        const records = await fetchQuestionRecords(question.id);
+        const todayRecord = records.find((r) => (r.created_at ?? "").slice(0, 10) === todayKey);
+        dailyDoneScore.value = todayRecord ? Number(todayRecord.ai_score) : null;
+      } catch {
+        dailyDoneScore.value = null;
+      }
     } else {
       questionBankTotal.value = 0;
       dailyQuestion.value = null;

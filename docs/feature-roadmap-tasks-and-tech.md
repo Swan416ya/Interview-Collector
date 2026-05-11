@@ -83,15 +83,17 @@
 
 **业务目标**：错题本**进得合理、出得及时**，避免「一题永错」或「刷一次就丢」。
 
+**实现状态**：§3.1 小项 **3.1.1–3.1.5 均已落地**（后端 `practice_routes.py` + `wrongbook_service.py` + 迁移 `w7b8k9w0r1n2`；前端 `/wrongbook` 与训练中心「仅错题本」题池）。下表「完成」列 `[x]` 表示已验收。
+
 ### 3.1 小项清单
 
-| 序号 | 小项 | 验收标准（建议） |
-|------|------|------------------|
-| 3.1.1 | **准入规则（可配置常量）** | 例：`ai_score <= 6` 自动进错题本；或连续 2 次低于阈值；支持用户**手动加入** |
-| 3.1.2 | **准出规则** | 例：该题最近 **N 次**（如 3 次）作答均 `>= 8` 则移出；或 `mastery_score` 达阈值且距上次错题超过 M 天 |
-| 3.1.3 | **状态字段或关联表** | `wrongbook` 表或在 `questions` 上 `wrongbook_flag` + `wrongbook_entered_at` / `last_wrong_at`（择一清晰建模） |
-| 3.1.4 | **列表 API** | `GET /api/practice/wrongbook?category=&state=in|out`；准出后历史仍可查「曾错题」 |
-| 3.1.5 | **与练习会话联动** | 「只抽错题」模式使用准入集合；准出后自动从当日错题池剔除 |
+| 序号 | 小项 | 验收标准（建议） | 完成 |
+|------|------|------------------|------|
+| 3.1.1 | **准入规则（可配置常量）** | `WRONGBOOK_ADMIT_MAX_SCORE`（默认 6）、`WRONGBOOK_ADMIT_CONSECUTIVE_LOW`（默认 1，即单次低分即入；设为 2 则需连续两次低分）；**手动** `POST /api/practice/wrongbook/manual` | [x] |
+| 3.1.2 | **准出规则** | 最近 `WRONGBOOK_DISCHARGE_STREAK` 次（默认 3）均 `>= WRONGBOOK_DISCHARGE_MIN_SCORE`（默认 8）则 `wrongbook_active=false` 并写 `wrongbook_cleared_at` | [x] |
+| 3.1.3 | **状态字段或关联表** | `questions` 上 `wrongbook_active`、`wrongbook_entered_at`、`wrongbook_last_wrong_at`、`wrongbook_cleared_at` | [x] |
+| 3.1.4 | **列表 API** | `GET /api/practice/wrongbook?state=in|out|all`；`out` = 已准出（曾入本且已清除） | [x] |
+| 3.1.5 | **与练习会话联动** | `POST /api/practice/sessions/start?pool=wrongbook`；`GET /api/practice/categories?pool=wrongbook` | [x] |
 
 ### 3.2 技术栈与学习线索
 
@@ -107,15 +109,17 @@
 
 **业务目标**：**保留**现有每题打分与短解析；在**每次固定题量（如 10 题）会话全部提交结束后**，追加 **1 次** LLM 生成**总评**（文字 + 多维度分数），前端用 **Chart.js 雷达图**展示；**全局**多维雷达为**更后期**（见 §8）。
 
+**实现状态**：§4.1 小项 **4.1.1–4.1.4 已落地**（`session_summary_service.py`、`ai_service.call_doubao_session_summary`、迁移 `m1n2s3u4m5r6`、`PracticeView` / `PracticeHistoryView` 雷达图 + Markdown）。4.1.5 仍为可选增强。
+
 ### 4.1 小项清单
 
-| 序号 | 小项 | 验收标准（建议） |
-|------|------|------------------|
-| 4.1.1 | **会话维度聚合** | 会话完成时收集 10 题的 `stem` / `ai_score` / 可选 `user_answer` 摘要 |
-| 4.1.2 | **单次总评 LLM** | 新函数如 `call_doubao_session_summary(...)` → JSON：`summary_text`、`dimensions`（如正确性/完整性/表达/八股深度等 4–6 维，0–10） |
-| 4.1.3 | **持久化** | `practice_sessions` 增加 `session_feedback_json`（或同级字段）存总评 + 维度，避免重复扣费（写完标记 `summary_done`） |
-| 4.1.4 | **前端：会话结束页雷达图** | Chart.js **radar**；展示总评 Markdown |
-| 4.1.5 | **（可选）每题 Rubric 扩展** | 仍用单次阅卷 API，逐步增加 `missed_points` 等字段；与总评维度尽量对齐，便于叙事一致 |
+| 序号 | 小项 | 验收标准（建议） | 完成 |
+|------|------|------------------|------|
+| 4.1.1 | **会话维度聚合** | 会话完成时收集 10 题的 `stem` / `ai_score` / 可选 `user_answer` 摘要 | [x] |
+| 4.1.2 | **单次总评 LLM** | `call_doubao_session_summary(...)` → JSON：`summary_text`、`dimensions`（**5** 维固定键，0–10） | [x] |
+| 4.1.3 | **持久化** | `practice_sessions.session_feedback_json` + `summary_done`；`GET .../summary` 幂等补全 | [x] |
+| 4.1.4 | **前端：会话结束页雷达图** | Chart.js **radar**；总评 Markdown；历史记录详情同显 | [x] |
+| 4.1.5 | **（可选）每题 Rubric 扩展** | 仍用单次阅卷 API，逐步增加 `missed_points` 等字段；与总评维度尽量对齐，便于叙事一致 | [ ] |
 | 4.1.6 | **全局雷达（低优，见 §8）** | 不在本阶段阻塞上线 |
 
 ### 4.2 技术栈与学习线索

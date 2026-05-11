@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { Chart, registerables } from "chart.js";
+import { nextTick, onMounted, ref, watch } from "vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
 import {
   fetchPracticeSessionRecords,
   fetchPracticeSessions,
+  fetchPracticeSummary,
   type PracticeRecord,
-  type PracticeSessionListItem
+  type PracticeSessionListItem,
+  type PracticeSummaryResponse
 } from "../api/practice";
+
+Chart.register(...registerables);
 
 const sessions = ref<PracticeSessionListItem[]>([]);
 const selectedSessionId = ref<number | null>(null);
@@ -14,9 +19,44 @@ const selectedRecords = ref<PracticeRecord[]>([]);
 const selectedTotal = ref(0);
 const selectedQuestionCount = ref(10);
 const selectedCompletedAt = ref("");
+const sessionSummary = ref<PracticeSummaryResponse | null>(null);
+const historyRadarCanvasRef = ref<HTMLCanvasElement | null>(null);
+let historyRadarChart: Chart<"radar", number[], string> | null = null;
 const loading = ref(false);
 const error = ref("");
 const detailVisible = ref(false);
+
+function destroyHistoryRadar() {
+  historyRadarChart?.destroy();
+  historyRadarChart = null;
+}
+
+function buildHistoryRadar() {
+  destroyHistoryRadar();
+  const fb = sessionSummary.value?.feedback;
+  const canvas = historyRadarCanvasRef.value;
+  if (!fb?.dimensions?.length || !canvas) return;
+  historyRadarChart = new Chart(canvas, {
+    type: "radar",
+    data: {
+      labels: fb.dimensions.map((d) => d.label),
+      datasets: [
+        {
+          label: "维度分",
+          data: fb.dimensions.map((d) => d.score),
+          borderColor: "#0969da",
+          backgroundColor: "rgba(9, 105, 218, 0.22)",
+          pointBackgroundColor: "#0969da"
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } }
+    }
+  });
+}
 
 async function loadSessions() {
   loading.value = true;
@@ -33,16 +73,39 @@ async function loadSessions() {
 async function openSession(sessionId: number) {
   try {
     selectedSessionId.value = sessionId;
-    const data = await fetchPracticeSessionRecords(sessionId);
+    sessionSummary.value = null;
+    destroyHistoryRadar();
+    const [data, summ] = await Promise.all([
+      fetchPracticeSessionRecords(sessionId),
+      fetchPracticeSummary(sessionId)
+    ]);
     selectedRecords.value = data.records;
     selectedTotal.value = data.total_score;
     selectedQuestionCount.value = data.question_count ?? 10;
     selectedCompletedAt.value = sessions.value.find((s) => s.id === sessionId)?.completed_at ?? "";
+    sessionSummary.value = summ;
     detailVisible.value = true;
+    await nextTick();
+    buildHistoryRadar();
   } catch (e) {
     error.value = "加载会话详情失败";
   }
 }
+
+watch(detailVisible, (v) => {
+  if (!v) {
+    destroyHistoryRadar();
+    sessionSummary.value = null;
+  }
+});
+
+watch(
+  () => sessionSummary.value?.feedback,
+  async () => {
+    await nextTick();
+    buildHistoryRadar();
+  }
+);
 
 onMounted(loadSessions);
 </script>
@@ -81,6 +144,18 @@ onMounted(loadSessions);
           <p><strong>会话：</strong>#{{ selectedSessionId }}</p>
           <p><strong>总分：</strong>{{ selectedTotal }}/{{ selectedQuestionCount * 10 }}</p>
           <p><strong>时间：</strong>{{ selectedCompletedAt }}</p>
+          <p v-if="sessionSummary?.summary_pending" style="color: #9a6700; font-size: 13px;">
+            总评未生成或生成失败，可稍后重开本条记录重试。
+          </p>
+          <template v-if="sessionSummary?.feedback">
+            <h4 style="margin: 12px 0 6px;">AI 会话总评</h4>
+            <div style="font-size: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 10px;">
+              <MarkdownRenderer :source="sessionSummary.feedback.summary_text" />
+            </div>
+            <div style="position: relative; height: 240px; max-width: 480px; margin-bottom: 12px;">
+              <canvas ref="historyRadarCanvasRef" />
+            </div>
+          </template>
           <div style="max-height: 54vh; overflow: auto; display: grid; gap: 8px;">
             <div v-for="r in selectedRecords" :key="r.id" style="border: 1px solid #dce3ef; padding: 10px; border-radius: 10px;">
               <div><strong>评分：</strong>{{ r.ai_score }}/10</div>

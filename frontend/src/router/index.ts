@@ -6,6 +6,7 @@ import ImportView from "../views/ImportView.vue";
 import KbCopilotView from "../views/KbCopilotView.vue";
 import PracticeHistoryView from "../views/PracticeHistoryView.vue";
 import PracticeView from "../views/PracticeView.vue";
+import WrongbookView from "../views/WrongbookView.vue";
 import QuestionsView from "../views/QuestionsView.vue";
 import TaxonomyView from "../views/TaxonomyView.vue";
 
@@ -19,6 +20,7 @@ const router = createRouter({
     { path: "/import", name: "import", component: ImportView },
     { path: "/copilot", name: "copilot", component: KbCopilotView },
     { path: "/practice", name: "practice", component: PracticeView },
+    { path: "/wrongbook", name: "wrongbook", component: WrongbookView },
     { path: "/practice-history", name: "practice-history", component: PracticeHistoryView },
     { path: "/answer-records", name: "answer-records", component: AnswerRecordsView }
   ]

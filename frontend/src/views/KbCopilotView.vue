@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import axios from "axios";
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import LoadingIndicator from "../components/LoadingIndicator.vue";
 import MarkdownRenderer from "../components/MarkdownRenderer.vue";
-import { postKbQuery, postKbReindex, type KbCitation, type KbQueryResponse } from "../api/kb";
+import { fetchKbStats, postKbQuery, postKbReindex, type KbCitation, type KbQueryResponse } from "../api/kb";
 
 const query = ref("");
 const loading = ref(false);
@@ -12,6 +12,19 @@ const error = ref("");
 const errorDetail = ref("");
 const infoMessage = ref("");
 const last = ref<KbQueryResponse | null>(null);
+const stats = ref<{ chunk_count: number; question_count: number } | null>(null);
+
+async function loadStats() {
+  try {
+    stats.value = await fetchKbStats();
+  } catch {
+    stats.value = null;
+  }
+}
+
+onMounted(() => {
+  void loadStats();
+});
 
 function formatError(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err)) {
@@ -62,6 +75,7 @@ async function runReindex() {
   try {
     const r = await postKbReindex();
     infoMessage.value = `已重建索引：处理 ${r.questions_processed} 道题目。`;
+    await loadStats();
   } catch (e) {
     error.value = formatError(e, "重建索引失败");
   } finally {
@@ -89,6 +103,17 @@ function onQueryKeydown(e: KeyboardEvent) {
     <p>
       在已入库题目的<strong>题干与参考答案</strong>中检索相关片段，并由 AI
       综合回答；回答下方列出引用片段，便于回到题库核对。
+    </p>
+
+    <p
+      v-if="stats"
+      style="font-size: 14px; color: #374151; padding: 10px 12px; border-radius: 8px; background: #f3f4f6;"
+    >
+      索引状态：<strong>{{ stats.chunk_count }}</strong> 条可检索片段，
+      题库 <strong>{{ stats.question_count }}</strong> 道题。
+      <span v-if="stats.question_count > 0 && stats.chunk_count === 0" style="color: #b45309;">
+        片段为 0 时请先点下方「重建全库索引」，否则只能得到「未找到相关条目」。
+      </span>
     </p>
 
     <p v-if="error" style="color: #c0392b;">{{ error }}</p>

@@ -60,12 +60,28 @@ class PracticeSubmitResponse(BaseModel):
     )
 
 
+class SessionDimensionOut(BaseModel):
+    key: str
+    label: str
+    score: int = Field(ge=0, le=10)
+
+
+class SessionFeedbackOut(BaseModel):
+    summary_text: str
+    dimensions: list[SessionDimensionOut] = Field(min_length=5, max_length=5)
+
+
 class PracticeSessionSummaryResponse(BaseModel):
     session_id: int
     total_score: int
     record_ids: list[int]
     completed_at: datetime | None
     question_count: int
+    feedback: SessionFeedbackOut | None = None
+    summary_pending: bool = Field(
+        default=False,
+        description="True when session is complete but session summary is not stored yet (LLM failed or not run)",
+    )
 
 
 class PracticeSessionOut(BaseModel):
@@ -75,6 +91,7 @@ class PracticeSessionOut(BaseModel):
     total_score: int
     question_count: int
     completed_at: datetime | None
+    summary_done: bool = False
     created_at: datetime
 
 
@@ -115,4 +132,15 @@ class PracticeRecordFeedPage(BaseModel):
     page: int
     page_size: int
     items: list[PracticeRecordFeedItem]
+
+
+class WrongbookManualAddRequest(BaseModel):
+    question_id: int = Field(ge=1)
+
+
+class WrongbookPageOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[QuestionOut]
 
