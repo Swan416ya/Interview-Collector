@@ -1,9 +1,12 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-load_dotenv()
+# 始终从 backend 目录加载 .env，避免从仓库根目录或其他 cwd 启动时读不到配置
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_BACKEND_ROOT / ".env")
 
 
 class Settings(BaseModel):
@@ -27,6 +30,10 @@ class Settings(BaseModel):
     ai_timeout_seconds: int = int(os.getenv("AI_TIMEOUT_SECONDS", "60"))
     ai_read_timeout_seconds: int = int(os.getenv("AI_READ_TIMEOUT_SECONDS", "120"))
     ai_connect_timeout_seconds: int = int(os.getenv("AI_CONNECT_TIMEOUT_SECONDS", "15"))
+    # 为 false 时 httpx 不读取 HTTP_PROXY/HTTPS_PROXY，避免错误代理导致 DNS(getaddrinfo/11001) 失败
+    ai_http_trust_env: bool = os.getenv("AI_HTTP_TRUST_ENV", "true").strip().lower() not in ("0", "false", "no", "off")
+    # 系统 DNS 失败时，通过 DoH(1.1.1.1/8.8.8.8/223.5.5.5) 查 A 记录后以 IP+SNI 访问 API
+    ai_doh_fallback: bool = os.getenv("AI_DOH_FALLBACK", "true").strip().lower() not in ("0", "false", "no", "off")
     ai_retries: int = int(os.getenv("AI_RETRIES", "2"))
     ai_max_output_tokens: int = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "1200"))
     ai_kb_max_output_tokens: int = int(os.getenv("AI_KB_MAX_OUTPUT_TOKENS", "2048"))

@@ -8,4 +8,5 @@ alembic
 pymysql
 cryptography
 httpx
+dnspython>=2.6.0
 

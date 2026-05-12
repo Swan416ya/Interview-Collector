@@ -1,7 +1,7 @@
-import { apiClient } from "./client";
+import { apiClient, resolveApiBaseURL } from "./client";
 import type { Question } from "./questions";
 
-const streamBaseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const streamBaseURL = resolveApiBaseURL();
 
 export interface PracticeStartResponse {
   session_id: number;
@@ -151,13 +151,21 @@ async function consumeGradeSubmitNdjsonStream(
   const timeoutMs = 120000;
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
+  const url = `${streamBaseURL}${path}`;
   try {
-    res = await fetch(`${streamBaseURL}${path}`, {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: controller.signal
     });
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error(
+        "无法连接判题接口（常见原因：后端未启动、API 地址与当前页面不同源被浏览器拦截）。本地开发可去掉 frontend 环境变量里的 VITE_API_BASE_URL，改用与页面同源的 Vite 代理。"
+      );
+    }
+    throw e;
   } finally {
     window.clearTimeout(timer);
   }

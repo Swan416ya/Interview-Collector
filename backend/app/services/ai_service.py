@@ -8,8 +8,32 @@ import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.services.ai_connect import prepare_https_url_with_doh
 
 logger = logging.getLogger(__name__)
+
+
+def _hint_ai_transport_error(message: str) -> str:
+    """为 DNS/代理类失败补充可操作的简短说明（面向 NDJSON error 与 502 detail）。"""
+    lower = message.lower()
+    if any(
+        x in lower
+        for x in (
+            "getaddrinfo",
+            "11001",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "nodename nor servname",
+        )
+    ):
+        return (
+            f"{message} | 说明：无法解析 API 域名或经代理解析失败。请检查本机网络；用 nslookup 测 "
+            f"AI_BASE_URL 的主机名；若环境变量里配置了 HTTP_PROXY/HTTPS_PROXY，可在 backend/.env 设 "
+            f"AI_HTTP_TRUST_ENV=false 让 AI 直连；已默认开启 AI_DOH_FALLBACK（通过 1.1.1.1/8.8.8.8/223.5.5.5 "
+            f"的 DoH 取 IP 再连），若仍失败请换网络或设 AI_DOH_FALLBACK=false 后排查防火墙是否拦截上述 IP 的 HTTPS。"
+        )
+    return message
+
 
 GRADE_SYSTEM_PROMPT = """
 你是计算机面试官。请对用户回答打分并给出解析。
@@ -235,6 +259,10 @@ def _post_doubao_responses_op(
             },
         )
 
+    url, doh_ext, doh_headers = prepare_https_url_with_doh(url)
+    send_headers = {**headers, **doh_headers}
+    httpx_extensions = doh_ext or None
+
     timeout = httpx.Timeout(
         timeout=settings.ai_timeout_seconds,
         connect=settings.ai_connect_timeout_seconds,
@@ -256,8 +284,13 @@ def _post_doubao_responses_op(
             len(raw_text),
         )
         try:
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, headers=headers, json=payload)
+            with httpx.Client(timeout=timeout, trust_env=settings.ai_http_trust_env) as client:
+                resp = client.post(
+                    url,
+                    headers=send_headers,
+                    json=payload,
+                    extensions=httpx_extensions,
+                )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             logger.info("AI response status=%s elapsed_ms=%s", resp.status_code, elapsed_ms)
             if resp.status_code >= 400:
@@ -311,7 +344,7 @@ def _post_doubao_responses_op(
                 status_code=502,
                 detail={
                     "message": "AI request failed after retries",
-                    "error": last_error,
+                    "error": _hint_ai_transport_error(last_error),
                     "attempts": settings.ai_retries + 1,
                     "model": settings.ai_model,
                     "base_url": settings.ai_base_url,
@@ -570,50 +603,89 @@ def iter_grade_stream_events(question_stem: str, user_answer: str) -> Iterator[t
         "Authorization": f"Bearer {settings.ai_api_key}",
         "Content-Type": "application/json",
     }
+    url, doh_ext, doh_headers = prepare_https_url_with_doh(url)
+    send_headers = {**headers, **doh_headers}
+    httpx_extensions = doh_ext or None
+
     timeout = httpx.Timeout(
         timeout=settings.ai_timeout_seconds,
         connect=settings.ai_connect_timeout_seconds,
         read=settings.ai_read_timeout_seconds,
     )
+    # 禁用连接池 keep-alive，降低部分网络/代理下 TLS 流式读一半被对端重置的概率。
+    _ai_limits = httpx.Limits(max_keepalive_connections=0, max_connections=100)
+
     content_parts: list[str] = []
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code >= 400:
-                    body = resp.read().decode("utf-8", errors="replace")[:800]
-                    yield ("error", f"AI stream HTTP {resp.status_code}: {body}")
-                    return
-                for line in resp.iter_lines():
-                    if not line or line.startswith(":"):
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[6:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = obj.get("choices")
-                    if not isinstance(choices, list) or not choices:
-                        continue
-                    delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-                    if not isinstance(delta, dict):
-                        continue
-                    rc = delta.get("reasoning_content")
-                    if isinstance(rc, str) and rc:
-                        yield ("reasoning", rc)
-                    else:
-                        alt_r = delta.get("reasoning")
-                        if isinstance(alt_r, str) and alt_r:
-                            yield ("reasoning", alt_r)
-                    piece = delta.get("content")
-                    if isinstance(piece, str) and piece:
-                        content_parts.append(piece)
-    except httpx.HTTPError as exc:
-        yield ("error", f"AI stream transport error: {exc}")
-        return
+
+    for attempt in range(settings.ai_retries + 1):
+        stream_made_progress = False
+        content_parts.clear()
+        try:
+            # 每次请求新建 Transport，避免 Client 关闭后复用已关闭的底层连接池。
+            transport = httpx.HTTPTransport(retries=0, http2=False)
+            with httpx.Client(
+                timeout=timeout,
+                limits=_ai_limits,
+                transport=transport,
+                trust_env=settings.ai_http_trust_env,
+            ) as client:
+                with client.stream(
+                    "POST",
+                    url,
+                    headers=send_headers,
+                    json=payload,
+                    extensions=httpx_extensions,
+                ) as resp:
+                    if resp.status_code >= 400:
+                        body = resp.read().decode("utf-8", errors="replace")[:800]
+                        yield ("error", f"AI stream HTTP {resp.status_code}: {body}")
+                        return
+                    for line in resp.iter_lines():
+                        if not line or line.startswith(":"):
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = obj.get("choices")
+                        if not isinstance(choices, list) or not choices:
+                            continue
+                        delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
+                        if not isinstance(delta, dict):
+                            continue
+                        rc = delta.get("reasoning_content")
+                        if isinstance(rc, str) and rc:
+                            yield ("reasoning", rc)
+                            stream_made_progress = True
+                        else:
+                            alt_r = delta.get("reasoning")
+                            if isinstance(alt_r, str) and alt_r:
+                                yield ("reasoning", alt_r)
+                                stream_made_progress = True
+                        piece = delta.get("content")
+                        if isinstance(piece, str) and piece:
+                            content_parts.append(piece)
+                            stream_made_progress = True
+            break
+        except httpx.HTTPError as exc:
+            err_msg = str(exc)
+            logger.warning(
+                "AI stream transport failed attempt=%s/%s progress=%s error=%s",
+                attempt + 1,
+                settings.ai_retries + 1,
+                stream_made_progress,
+                err_msg,
+            )
+            if stream_made_progress or attempt >= settings.ai_retries:
+                yield ("error", _hint_ai_transport_error(f"AI stream transport error: {err_msg}"))
+                return
+            time.sleep(1.5 * (attempt + 1))
+            continue
 
     full_text = "".join(content_parts).strip()
     if not full_text:
